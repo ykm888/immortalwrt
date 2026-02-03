@@ -5,7 +5,6 @@ on:
 
 env:
   WORKDIR: openwrt
-  # 这里定义底座源码，编译时只会拉取一次，之后你可以通过脚本物理修改它
   SOURCE_URL: https://github.com/immortalwrt/immortalwrt.git
   SOURCE_BRANCH: openwrt-24.10
 
@@ -13,46 +12,70 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      - name: 1. 检出本地配置
+      - name: 1. 检出本地配置仓库
         uses: actions/checkout@v4
 
-      - name: 2. 初始化 Ubuntu 环境
+      - name: 2. 准备 Ubuntu 宿主机编译环境
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler bc dos2unix
+          sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler bc dos2unix libncurses5-dev libssl-dev
 
-      - name: 3. 拉取底座源码
+      - name: 3. 克隆 ImmortalWrt 24.10 源码
         run: git clone --depth=1 -b ${{ env.SOURCE_BRANCH }} ${{ env.SOURCE_URL }} ${{ env.WORKDIR }}
 
-      - name: 4. 运行专属补丁脚本 (自动生成源码修改)
+      - name: 4. 执行专属 Patch (注入三件套与环境欺骗)
         working-directory: ${{ env.WORKDIR }}
         run: |
           chmod +x ../scripts/sl3000-patch.sh
           ../scripts/sl3000-patch.sh
 
-      - name: 5. 编译 Host 工具 (PATH 劫持)
+      - name: 5. 编译 Host 工具链 (解决 m4/flex 依赖)
+        working-directory: ${{ env.WORKDIR }}
+        run: |
+          # 必须强制注入伪装后的 PATH
+          export PATH=$GITHUB_WORKSPACE/${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
+          make tools/install -j$(nproc) || make tools/install -j1 V=s
+
+      - name: 6. 核心步骤：编译交叉编译器 (解决 gcc not found)
         working-directory: ${{ env.WORKDIR }}
         run: |
           export PATH=$GITHUB_WORKSPACE/${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
-          make tools/install -j$(nproc)
+          echo "🔨 正在构建 aarch64 交叉工具链..."
+          make toolchain/install -j$(nproc) || make toolchain/install -j1 V=s
 
-      - name: 6. 内核物理注入 (1GB 锁定)
+      - name: 7. 内核物理注入 (1GB DTS 最终锁定)
         working-directory: ${{ env.WORKDIR }}
         run: |
+          # 先解压内核，此时工具链已经好了，prepare 不会报错
           make target/linux/prepare -j$(nproc)
+          
+          # 动态寻找内核 DTS 路径 (适配 6.6 或其他版本)
           K_DIR=$(find build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | head -n 1)
+          echo "🚀 目标内核路径: $K_DIR"
+          
+          # 强力覆盖 DTS
           cp -fv ../custom-config/mt7981b-sl3000-emmc.dts "$K_DIR/"
+          
+          # 修改内核 Makefile 确保包含我们的 dtb
           sed -i '/mt7981b-sl3000-emmc.dtb/d' "$K_DIR/Makefile"
           echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$K_DIR/Makefile"
 
-      - name: 7. 执行最终编译
+      - name: 8. 生产 1GB 专用固件
         working-directory: ${{ env.WORKDIR }}
         run: |
           export PATH=$GITHUB_WORKSPACE/${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
+          echo "📦 正在编译内核与打包镜像..."
           make target/linux/install -j$(nproc) V=i || make target/linux/install -j1 V=s
           make target/install -j$(nproc)
 
-      - name: 8. 发布固件
+      - name: 9. 上传 Artifacts 固件
+        uses: actions/upload-artifact@v4
+        with:
+          name: SL3000-1GB-Firmware
+          path: ${{ env.WORKDIR }}/bin/targets/mediatek/filogic/*.bin
+
+      - name: 10. 发布 GitHub Release
+        if: success()
         uses: softprops/action-gh-release@v2
         with:
           tag_name: SL3000-v2026-Final
