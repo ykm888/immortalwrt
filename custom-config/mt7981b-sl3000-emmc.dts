@@ -1,0 +1,8 @@
+define Device/sl3000-emmc
+  DEVICE_VENDOR := SL3000
+  DEVICE_MODEL := Custom-1GB-Edition
+  DEVICE_DTS := mt7981b-sl3000-emmc
+  KERNEL_SIZE := 128M
+  IMAGE_SIZE := 1024M
+endef
+TARGET_DEVICES += sl3000-emmc
