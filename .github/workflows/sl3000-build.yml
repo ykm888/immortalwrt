@@ -1,0 +1,59 @@
+name: SL3000-Dedicated-Source-Build
+
+on:
+  workflow_dispatch:
+
+env:
+  WORKDIR: openwrt
+  # 这里定义底座源码，编译时只会拉取一次，之后你可以通过脚本物理修改它
+  SOURCE_URL: https://github.com/immortalwrt/immortalwrt.git
+  SOURCE_BRANCH: openwrt-24.10
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: 1. 检出本地配置
+        uses: actions/checkout@v4
+
+      - name: 2. 初始化 Ubuntu 环境
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler bc dos2unix
+
+      - name: 3. 拉取底座源码
+        run: git clone --depth=1 -b ${{ env.SOURCE_BRANCH }} ${{ env.SOURCE_URL }} ${{ env.WORKDIR }}
+
+      - name: 4. 运行专属补丁脚本 (自动生成源码修改)
+        working-directory: ${{ env.WORKDIR }}
+        run: |
+          chmod +x ../scripts/sl3000-patch.sh
+          ../scripts/sl3000-patch.sh
+
+      - name: 5. 编译 Host 工具 (PATH 劫持)
+        working-directory: ${{ env.WORKDIR }}
+        run: |
+          export PATH=$GITHUB_WORKSPACE/${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
+          make tools/install -j$(nproc)
+
+      - name: 6. 内核物理注入 (1GB 锁定)
+        working-directory: ${{ env.WORKDIR }}
+        run: |
+          make target/linux/prepare -j$(nproc)
+          K_DIR=$(find build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | head -n 1)
+          cp -fv ../custom-config/mt7981b-sl3000-emmc.dts "$K_DIR/"
+          sed -i '/mt7981b-sl3000-emmc.dtb/d' "$K_DIR/Makefile"
+          echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$K_DIR/Makefile"
+
+      - name: 7. 执行最终编译
+        working-directory: ${{ env.WORKDIR }}
+        run: |
+          export PATH=$GITHUB_WORKSPACE/${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
+          make target/linux/install -j$(nproc) V=i || make target/linux/install -j1 V=s
+          make target/install -j$(nproc)
+
+      - name: 8. 发布固件
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: SL3000-v2026-Final
+          files: ${{ env.WORKDIR }}/bin/targets/mediatek/filogic/*.bin
