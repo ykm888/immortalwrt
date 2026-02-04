@@ -1,4 +1,4 @@
-name: SL3000-Factory-Ultra-Build
+name: SL3000-Brute-Force-Build
 
 on:
   workflow_dispatch:
@@ -14,76 +14,59 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: 1. 检出本地配置仓库
+      - name: 1. 检出配置
         uses: actions/checkout@v4
 
-      - name: 2. [自愈/空间优化] 磁盘极致瘦身
-        # 移除不需要的 Dotnet, Android, Haskell 等环境，腾出约 5GB-8GB 空间
+      - name: 2. [暴力] 极致磁盘清空
         run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/powershell /usr/share/swift /usr/local/.ghcup /var/lib/docker
+          sudo docker image prune -a -f
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/powershell /usr/share/swift /var/lib/docker
           sudo apt-get clean
           df -h
 
-      - name: 3. 准备系统构建环境
+      - name: 3. 环境与克隆
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler bc dos2unix libncurses5-dev libssl-dev
+          sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler bc dos2unix
+          git clone --depth=1 -b ${{ env.SOURCE_BRANCH }} ${{ env.SOURCE_REPO }} ${{ env.WORKDIR }}
 
-      - name: 4. 克隆 ImmortalWrt 源码
-        run: git clone --depth=1 -b ${{ env.SOURCE_BRANCH }} ${{ env.SOURCE_REPO }} ${{ env.WORKDIR }}
-
-      - name: 5. 专属源码重构 (执行注入脚本)
+      - name: 4. 执行暴力注入
         working-directory: ${{ env.WORKDIR }}
         run: |
           chmod +x ../scripts/sl3000-patch.sh
           ../scripts/sl3000-patch.sh
 
-      - name: 6. [自愈] 极速构建工具链
+      - name: 5. 编译工具链 (不限速)
         working-directory: ${{ env.WORKDIR }}
         run: |
           export PATH=${{ github.workspace }}/${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
-          # 如果多线程失败，自动降级为单线程自愈
           make tools/install -j$(nproc) || make tools/install -j1 V=s
           make toolchain/install -j$(nproc) || make toolchain/install -j1 V=s
 
-      - name: 7. 内核环境预热 (解决插件依赖冲突)
+      - name: 6. [暴力补丁] 在打包前一秒锁定 DTS
+        working-directory: ${{ env.WORKDIR }}
+        run: |
+          # 强制解压内核
+          make target/linux/prepare -j$(nproc)
+          # 找到所有可能的内核目录，统统强行塞入你的 DTS
+          find build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | while read -r dts_path; do
+            cp -fv target/linux/mediatek/dts/mt7981b-sl3000-emmc.dts "$dts_path/"
+            echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$dts_path/Makefile"
+          done
+
+      - name: 7. 暴力打包 (核心自愈)
         working-directory: ${{ env.WORKDIR }}
         run: |
           export PATH=${{ github.workspace }}/${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
+          # 核心流程三部曲，失败则单核重试
           make target/linux/compile -j$(nproc) || make target/linux/compile -j1 V=s
-
-      - name: 8. 物理锁定 DTS (回马枪确保 1GB 生效)
-        run: |
-          K_DTS_DIR=$(find ${{ env.WORKDIR }}/build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | head -n 1)
-          cp -fv ${{ env.WORKDIR }}/target/linux/mediatek/dts/mt7981b-sl3000-emmc.dts "$K_DTS_DIR/"
-          sed -i '/mt7981b-sl3000-emmc.dtb/d' "$K_DTS_DIR/Makefile"
-          echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$K_DTS_DIR/Makefile"
-
-      - name: 9. [自愈] 全量软件包编译与固件合成
-        working-directory: ${{ env.WORKDIR }}
-        run: |
-          export PATH=${{ github.workspace }}/${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
-          # 第一轮多核冲刺，失败则第二轮单核详细报错
           make package/compile -j$(nproc) || make package/compile -j1 V=s
           make target/install -j$(nproc) || make target/install -j1 V=s
 
-      - name: 10. 整理固件并重命名
-        run: |
-          mkdir -p bin/release
-          DATE=$(date +%Y%m%d-%H%M)
-          find ${{ env.WORKDIR }}/bin/targets/mediatek/filogic/ -name "*.bin" | while read -r fw; do
-            cp -v "$fw" "bin/release/SL3000-1GB-Factory-${DATE}-$(basename $fw)"
-          done
-          echo "RELEASE_TAG=SL3000-v${DATE}" >> $GITHUB_ENV
-
-      - name: 11. 发布 GitHub Release
+      - name: 8. 发布 Release
         uses: softprops/action-gh-release@v2
+        if: success()
         with:
-          tag_name: ${{ env.RELEASE_TAG }}
-          files: bin/release/*
-          body: |
-            ## SL3000 旗舰版 自动生成固件
-            - **全链路自愈**: 已启用 (Multi-thread failover)
-            - **空间优化**: 已剔除冗余构建环境
-            - **硬件规格**: 1GB RAM / 1GB eMMC
+          tag_name: SL3000-BruteForce-${{ github.run_id }}
+          files: ${{ env.WORKDIR }}/bin/targets/mediatek/filogic/*.bin
           token: ${{ secrets.GITHUB_TOKEN }}
