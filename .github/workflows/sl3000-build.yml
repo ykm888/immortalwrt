@@ -1,4 +1,4 @@
-name: SL3000-1GB-Final-Fixed
+name: SL3000-Factory-Flagship-Build
 
 on:
   workflow_dispatch:
@@ -11,61 +11,74 @@ env:
 jobs:
   build:
     runs-on: ubuntu-22.04
+    permissions:
+      contents: write  # 必须开启写入权限才能发布 Release
     steps:
-      - name: 1. 检出本地仓库 (包含脚本和配置)
+      - name: 1. 检出本地配置仓库
         uses: actions/checkout@v4
 
-      - name: 2. 安装环境
-        run: sudo apt-get update && sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler bc dos2unix
+      - name: 2. 准备系统构建环境
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler bc dos2unix libncurses5-dev libssl-dev
 
       - name: 3. 克隆 ImmortalWrt 源码
         run: git clone --depth=1 -b ${{ env.SOURCE_BRANCH }} ${{ env.SOURCE_REPO }} ${{ env.WORKDIR }}
 
-      - name: 4. 执行注入补丁 (修复路径查找)
+      - name: 4. 专属源码重构 (执行注入脚本)
         working-directory: ${{ env.WORKDIR }}
         run: |
-          # 直接使用检出仓库里的脚本，避免路径迷失
           chmod +x ../scripts/sl3000-patch.sh
           ../scripts/sl3000-patch.sh
 
-      - name: 5. 编译工具链
+      - name: 5. 构建工具与编译器
         working-directory: ${{ env.WORKDIR }}
         run: |
           export PATH=${{ github.workspace }}/${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
           make tools/install -j$(nproc)
           make toolchain/install -j$(nproc)
 
-      - name: 6. 内核初始化 (解决模块依赖)
+      - name: 6. 内核环境预热 (解决插件依赖冲突)
         working-directory: ${{ env.WORKDIR }}
         run: |
           export PATH=${{ github.workspace }}/${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
           make target/linux/compile -j$(nproc)
 
-      - name: 7. 编译软件包
+      - name: 7. 物理锁定 DTS (防止内核解压覆盖)
+        run: |
+          K_DTS_DIR=$(find ${{ env.WORKDIR }}/build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | head -n 1)
+          cp -fv ${{ env.WORKDIR }}/target/linux/mediatek/dts/mt7981b-sl3000-emmc.dts "$K_DTS_DIR/"
+          sed -i '/mt7981b-sl3000-emmc.dtb/d' "$K_DTS_DIR/Makefile"
+          echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$K_DTS_DIR/Makefile"
+
+      - name: 8. 全量软件包编译与固件合成
         working-directory: ${{ env.WORKDIR }}
         run: |
           export PATH=${{ github.workspace }}/${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
           make package/compile -j$(nproc) || make package/compile -j1 V=s
-
-      - name: 8. 锁定 DTS 并生成最终镜像
-        working-directory: ${{ env.WORKDIR }}
-        run: |
-          export PATH=${{ github.workspace }}/${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
-          
-          # 寻找内核 DTS 目录并强制覆盖
-          K_DTS_DIR=$(find build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | head -n 1)
-          cp -fv "${{ github.workspace }}/fixed_files/sl3000.dts" "$K_DTS_DIR/mt7981b-sl3000-emmc.dts"
-          
-          # 修正内核 Makefile
-          sed -i '/mt7981b-sl3000-emmc.dtb/d' "$K_DTS_DIR/Makefile"
-          echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$K_DTS_DIR/Makefile"
-          
-          echo "📦 打包中..."
-          make target/linux/install -j$(nproc) || make target/linux/install -j1 V=s
           make target/install -j$(nproc)
 
-      - name: 9. 上传固件
-        uses: actions/upload-artifact@v4
+      - name: 9. 整理固件并重命名 (工厂级标记)
+        run: |
+          mkdir -p bin/release
+          DATE=$(date +%Y%m%d-%H%M)
+          # 提取并重命名固件，添加 1GB 和时间戳标记
+          find ${{ env.WORKDIR }}/bin/targets/mediatek/filogic/ -name "*.bin" | while read -r fw; do
+            NAME=$(basename "$fw")
+            new_name="SL3000-1GB-Factory-${DATE}-${NAME}"
+            cp -v "$fw" "bin/release/${new_name}"
+          done
+          echo "RELEASE_TAG=SL3000-v${DATE}" >> $GITHUB_ENV
+
+      - name: 10. 发布 GitHub Release (自动固件推送)
+        uses: softprops/action-gh-release@v2
         with:
-          name: SL3000-Final-Image
-          path: ${{ env.WORKDIR }}/bin/targets/mediatek/filogic/*.bin
+          tag_name: ${{ env.RELEASE_TAG }}
+          files: bin/release/*
+          body: |
+            ## SL3000 旗舰版 1GB 自动生成固件
+            - **内核版本**: 6.6.x (ImmortalWrt 24.10)
+            - **硬件规格**: 1GB RAM / 1GB eMMC (无 USB)
+            - **构建时间**: ${{ env.RELEASE_TAG }}
+            - **特点**: 自动扩容 DTS，集成 F2FS 存储支持，清理 USB 冗余驱动。
+          token: ${{ secrets.GITHUB_TOKEN }}
