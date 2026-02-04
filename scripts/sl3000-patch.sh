@@ -1,13 +1,12 @@
 #!/bin/bash
 set -e
 
-echo ">>> [SL3000] 执行暴力初始化..."
+echo ">>> [SL3000] 执行初始化注入..."
 
 ROOT_DIR=$(pwd)
-# 修正点：直接利用 GitHub Actions 的环境变量定位配置仓库
-SRC_DIR="${GITHUB_WORKSPACE}/custom-config"
+# 修正点：通过 find 动态获取配置仓库的绝对路径
+SRC_DIR=$(find "${GITHUB_WORKSPACE}" -maxdepth 2 -type d -name "custom-config" | head -n 1)
 
-# 寻找核心文件
 DTS_SRC=$(find "$SRC_DIR" -type f -name "*mt7981b-sl3000-emmc.dts" | head -n 1)
 MK_SRC=$(find "$SRC_DIR" -type f -name "filogic.mk" | head -n 1)
 
@@ -22,7 +21,7 @@ mkdir -p staging_dir/host/stamp
 touch staging_dir/host/stamp/.tools_compile_y
 touch staging_dir/host/.m4_installed
 
-# --- 2. DTS 物理缝合 (保持原文逻辑) ---
+# --- 2. DTS 物理缝合 ---
 BASE_DTSI=$(find "$ROOT_DIR/target/linux/mediatek" -name "mt7981.dtsi" | head -n 1)
 INC_DIR=$(dirname "$BASE_DTSI")
 DTS_DEST="$INC_DIR/mt7981b-sl3000-emmc.dts"
@@ -40,8 +39,6 @@ DTS_DEST="$INC_DIR/mt7981b-sl3000-emmc.dts"
 
 # --- 3. 注入配置 ---
 ./scripts/feeds update -a && ./scripts/feeds install -a
-
-# 强制覆盖镜像规则
 [ -f "$MK_SRC" ] && cp -fv "$MK_SRC" "target/linux/mediatek/image/filogic.mk"
 
 cat <<EOT > .config
