@@ -1,4 +1,4 @@
-name: SL3000-Brute-Force-Build
+name: SL3000-Factory-Ultra-Final
 
 on:
   workflow_dispatch:
@@ -14,59 +14,77 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: 1. 检出配置
+      - name: 1. 检出配置仓库
         uses: actions/checkout@v4
 
-      - name: 2. [暴力] 极致磁盘清空
+      - name: 2. [暴力] 极致磁盘瘦身
         run: |
           sudo docker image prune -a -f
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/powershell /usr/share/swift /var/lib/docker
           sudo apt-get clean
-          df -h
 
-      - name: 3. 环境与克隆
+      - name: 3. 准备构建环境
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler bc dos2unix
-          git clone --depth=1 -b ${{ env.SOURCE_BRANCH }} ${{ env.SOURCE_REPO }} ${{ env.WORKDIR }}
+          sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler bc dos2unix libncurses5-dev libssl-dev
 
-      - name: 4. 执行暴力注入
-        working-directory: ${{ env.WORKDIR }}
+      - name: 4. 克隆源码并重构
         run: |
+          git clone --depth=1 -b ${{ env.SOURCE_BRANCH }} ${{ env.SOURCE_REPO }} ${{ env.WORKDIR }}
+          cd ${{ env.WORKDIR }}
           chmod +x ../scripts/sl3000-patch.sh
           ../scripts/sl3000-patch.sh
 
-      - name: 5. 编译工具链 (不限速)
+      - name: 5. 编译工具链 (核心自愈模式)
         working-directory: ${{ env.WORKDIR }}
         run: |
           export PATH=${{ github.workspace }}/${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
           make tools/install -j$(nproc) || make tools/install -j1 V=s
           make toolchain/install -j$(nproc) || make toolchain/install -j1 V=s
 
-      - name: 6. [暴力补丁] 在打包前一秒锁定 DTS
+      - name: 6. [关键] 内核预热与 DTS 强行锁死
         working-directory: ${{ env.WORKDIR }}
         run: |
-          # 强制解压内核
+          # 1. 强制解压内核
           make target/linux/prepare -j$(nproc)
-          # 找到所有可能的内核目录，统统强行塞入你的 DTS
-          find build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | while read -r dts_path; do
-            cp -fv target/linux/mediatek/dts/mt7981b-sl3000-emmc.dts "$dts_path/"
-            echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$dts_path/Makefile"
-          done
+          
+          # 2. 定位内核 DTS 目录并强制注入 (清洗后的版本)
+          K_DTS_DIR=$(find build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | head -n 1)
+          cp -fv target/linux/mediatek/dts/mt7981b-sl3000-emmc.dts "$K_DTS_DIR/"
+          
+          # 3. 暴力修正 Makefile 链接
+          sed -i '/mt7981b-sl3000-emmc.dtb/d' "$K_DTS_DIR/Makefile"
+          echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$K_DTS_DIR/Makefile"
 
-      - name: 7. 暴力打包 (核心自愈)
+      - name: 7. 全量编译 (自愈+防 root-mediatek 缺失)
         working-directory: ${{ env.WORKDIR }}
         run: |
           export PATH=${{ github.workspace }}/${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
-          # 核心流程三部曲，失败则单核重试
+          # 优先编译内核，确保 root-mediatek 目录生成
           make target/linux/compile -j$(nproc) || make target/linux/compile -j1 V=s
+          # 全量包编译
           make package/compile -j$(nproc) || make package/compile -j1 V=s
+          # 最终镜像合成
           make target/install -j$(nproc) || make target/install -j1 V=s
 
-      - name: 8. 发布 Release
+      - name: 8. 整理固件并重命名
+        run: |
+          mkdir -p bin/release
+          DATE=$(date +%Y%m%d-%H%M)
+          find ${{ env.WORKDIR }}/bin/targets/mediatek/filogic/ -name "*.bin" | while read -r fw; do
+            cp -v "$fw" "bin/release/SL3000-1GB-Factory-${DATE}-$(basename $fw)"
+          done
+          echo "RELEASE_TAG=SL3000-v${DATE}" >> $GITHUB_ENV
+
+      - name: 9. 自动发布固件至 Release
         uses: softprops/action-gh-release@v2
         if: success()
         with:
-          tag_name: SL3000-BruteForce-${{ github.run_id }}
-          files: ${{ env.WORKDIR }}/bin/targets/mediatek/filogic/*.bin
+          tag_name: ${{ env.RELEASE_TAG }}
+          files: bin/release/*
+          body: |
+            ### SL3000 旗舰版自动构建 (工厂版 2.0)
+            - **硬件规格**: 1GB RAM / 1GB eMMC
+            - **内核版本**: 6.6.x (ImmortalWrt 24.10)
+            - **自愈机制**: 已启用 (磁盘清理 + 强行 DTS 锁定)
           token: ${{ secrets.GITHUB_TOKEN }}
