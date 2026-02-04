@@ -1,4 +1,4 @@
-name: SL3000-Factory-Flagship-Build
+name: SL3000-Factory-Ultra-Build
 
 on:
   workflow_dispatch:
@@ -12,73 +12,78 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     permissions:
-      contents: write  # 必须开启写入权限才能发布 Release
+      contents: write
     steps:
       - name: 1. 检出本地配置仓库
         uses: actions/checkout@v4
 
-      - name: 2. 准备系统构建环境
+      - name: 2. [自愈/空间优化] 磁盘极致瘦身
+        # 移除不需要的 Dotnet, Android, Haskell 等环境，腾出约 5GB-8GB 空间
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/powershell /usr/share/swift /usr/local/.ghcup /var/lib/docker
+          sudo apt-get clean
+          df -h
+
+      - name: 3. 准备系统构建环境
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler bc dos2unix libncurses5-dev libssl-dev
 
-      - name: 3. 克隆 ImmortalWrt 源码
+      - name: 4. 克隆 ImmortalWrt 源码
         run: git clone --depth=1 -b ${{ env.SOURCE_BRANCH }} ${{ env.SOURCE_REPO }} ${{ env.WORKDIR }}
 
-      - name: 4. 专属源码重构 (执行注入脚本)
+      - name: 5. 专属源码重构 (执行注入脚本)
         working-directory: ${{ env.WORKDIR }}
         run: |
           chmod +x ../scripts/sl3000-patch.sh
           ../scripts/sl3000-patch.sh
 
-      - name: 5. 构建工具与编译器
+      - name: 6. [自愈] 极速构建工具链
         working-directory: ${{ env.WORKDIR }}
         run: |
           export PATH=${{ github.workspace }}/${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
-          make tools/install -j$(nproc)
-          make toolchain/install -j$(nproc)
+          # 如果多线程失败，自动降级为单线程自愈
+          make tools/install -j$(nproc) || make tools/install -j1 V=s
+          make toolchain/install -j$(nproc) || make toolchain/install -j1 V=s
 
-      - name: 6. 内核环境预热 (解决插件依赖冲突)
+      - name: 7. 内核环境预热 (解决插件依赖冲突)
         working-directory: ${{ env.WORKDIR }}
         run: |
           export PATH=${{ github.workspace }}/${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
-          make target/linux/compile -j$(nproc)
+          make target/linux/compile -j$(nproc) || make target/linux/compile -j1 V=s
 
-      - name: 7. 物理锁定 DTS (防止内核解压覆盖)
+      - name: 8. 物理锁定 DTS (回马枪确保 1GB 生效)
         run: |
           K_DTS_DIR=$(find ${{ env.WORKDIR }}/build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | head -n 1)
           cp -fv ${{ env.WORKDIR }}/target/linux/mediatek/dts/mt7981b-sl3000-emmc.dts "$K_DTS_DIR/"
           sed -i '/mt7981b-sl3000-emmc.dtb/d' "$K_DTS_DIR/Makefile"
           echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$K_DTS_DIR/Makefile"
 
-      - name: 8. 全量软件包编译与固件合成
+      - name: 9. [自愈] 全量软件包编译与固件合成
         working-directory: ${{ env.WORKDIR }}
         run: |
           export PATH=${{ github.workspace }}/${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
+          # 第一轮多核冲刺，失败则第二轮单核详细报错
           make package/compile -j$(nproc) || make package/compile -j1 V=s
-          make target/install -j$(nproc)
+          make target/install -j$(nproc) || make target/install -j1 V=s
 
-      - name: 9. 整理固件并重命名 (工厂级标记)
+      - name: 10. 整理固件并重命名
         run: |
           mkdir -p bin/release
           DATE=$(date +%Y%m%d-%H%M)
-          # 提取并重命名固件，添加 1GB 和时间戳标记
           find ${{ env.WORKDIR }}/bin/targets/mediatek/filogic/ -name "*.bin" | while read -r fw; do
-            NAME=$(basename "$fw")
-            new_name="SL3000-1GB-Factory-${DATE}-${NAME}"
-            cp -v "$fw" "bin/release/${new_name}"
+            cp -v "$fw" "bin/release/SL3000-1GB-Factory-${DATE}-$(basename $fw)"
           done
           echo "RELEASE_TAG=SL3000-v${DATE}" >> $GITHUB_ENV
 
-      - name: 10. 发布 GitHub Release (自动固件推送)
+      - name: 11. 发布 GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           files: bin/release/*
           body: |
-            ## SL3000 旗舰版 1GB 自动生成固件
-            - **内核版本**: 6.6.x (ImmortalWrt 24.10)
-            - **硬件规格**: 1GB RAM / 1GB eMMC (无 USB)
-            - **构建时间**: ${{ env.RELEASE_TAG }}
-            - **特点**: 自动扩容 DTS，集成 F2FS 存储支持，清理 USB 冗余驱动。
+            ## SL3000 旗舰版 自动生成固件
+            - **全链路自愈**: 已启用 (Multi-thread failover)
+            - **空间优化**: 已剔除冗余构建环境
+            - **硬件规格**: 1GB RAM / 1GB eMMC
           token: ${{ secrets.GITHUB_TOKEN }}
