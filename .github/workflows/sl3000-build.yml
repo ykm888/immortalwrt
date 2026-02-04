@@ -5,6 +5,8 @@ on:
 
 env:
   WORKDIR: ${{ github.workspace }}/immortalwrt
+  # 强制锁定配置目录名
+  CONFDIR: ${{ github.workspace }}/custom-config
   SOURCE_REPO: https://github.com/immortalwrt/immortalwrt.git
   SOURCE_BRANCH: openwrt-24.10
 
@@ -17,79 +19,65 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential flex bison m4 gawk libtool-bin rsync unzip wget curl patch git-core gettext libncurses-dev zlib1g-dev libssl-dev libelf-dev python3 device-tree-compiler bc dos2unix
 
-      - name: 2. 获取源码与配置
+      - name: 2. 获取源码与配置 (精准路径版)
         run: |
-          # 1. 拉取 OpenWrt 源码
+          # 克隆 OpenWrt 源码
           git clone --depth=1 -b ${{ env.SOURCE_BRANCH }} ${{ env.SOURCE_REPO }} ${{ env.WORKDIR }}
-          
-          # 2. 拉取你的配置仓库，强制命名为 custom-config
-          git clone https://github.com/${{ github.repository }}.git ${{ github.workspace }}/custom-config
+          # 暴力克隆你的配置仓库到指定目录
+          git clone https://github.com/${{ github.repository }}.git ${{ env.CONFDIR }}
 
-      - name: 3. 执行初始化脚本
+      - name: 3. 环境与 DTS 初始化注入
         working-directory: ${{ env.WORKDIR }}
         run: |
-          # 暴力查找脚本，不管它在哪个子目录
-          SCRIPT=$(find ${{ github.workspace }}/custom-config -name "clean-feeds.sh" | head -n 1)
-          if [ -z "$SCRIPT" ]; then
-            echo "❌ 找不到 clean-feeds.sh"
-            exit 1
-          fi
-          cp -v "$SCRIPT" ./run_setup.sh
-          chmod +x run_setup.sh
-          ./run_setup.sh
+          # 原文逻辑：既然已知路径，直接精准拷贝
+          # 尝试从 scripts 目录或根目录找 clean-feeds.sh
+          cp -v ${{ env.CONFDIR }}/scripts/clean-feeds.sh ./ 2>/dev/null || cp -v ${{ env.CONFDIR }}/clean-feeds.sh ./
+          chmod +x clean-feeds.sh
+          ./clean-feeds.sh
 
-      - name: 4. 编译 Host 工具链
+      - name: 4. 编译 Host 工具链 (Tools)
         working-directory: ${{ env.WORKDIR }}
         run: |
+          export PATH=${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
           make tools/install -j$(nproc) || make tools/install -j1 V=s
+
+      - name: 5. 编译交叉编译器 (Toolchain)
+        working-directory: ${{ env.WORKDIR }}
+        run: |
+          export PATH=${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
           make toolchain/install -j$(nproc) || make toolchain/install -j1 V=s
 
-      - name: 5. 内核解压与暴力植入 (核心步骤)
+      - name: 6. 内核 Prepare 与 编译现场“暴力回马枪”
         working-directory: ${{ env.WORKDIR }}
         run: |
           export PATH=${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
-          
-          echo "🔥 [第一步] 解压内核源码..."
           make target/linux/prepare -j$(nproc)
           
-          echo "🔥 [第二步] 定位内核真实路径..."
-          # 寻找包含 mt7981.dtsi 的目录，这就是内核源码的 DTS 目录
-          K_DTS_DIR=$(find build_dir -type d -path "*/arch/arm64/boot/dts/mediatek" | head -n 1)
-          echo "🎯 目标目录: $K_DTS_DIR"
+          # 暴力寻找内核真正的编译目录
+          REAL_K_DIR=$(find build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | head -n 1)
           
-          echo "🔥 [第三步] 暴力拷贝 DTS 文件..."
-          SRC_DTS=$(find ${{ github.workspace }}/custom-config -name "*mt7981b-sl3000-emmc.dts" | head -n 1)
-          cp -fv "$SRC_DTS" "$K_DTS_DIR/mt7981b-sl3000-emmc.dts"
+          # 从配置仓库暴力抓取 DTS
+          SRC_DTS=$(find ${{ env.CONFDIR }} -name "*mt7981b-sl3000-emmc.dts" | head -n 1)
+          cp -fv "$SRC_DTS" "$REAL_K_DIR/mt7981b-sl3000-emmc.dts"
           
-          echo "🔥 [第四步] 强制修改 1GB 内存地址 (防止源码写错)..."
-          # 暴力替换 memory 节点，确保是 1GB 范围 (0x40000000)
-          sed -i 's/reg = <0x00 0x40000000 0x00 0x10000000>/reg = <0x00 0x40000000 0x00 0x40000000>/g' "$K_DTS_DIR/mt7981b-sl3000-emmc.dts"
-          
-          echo "🔥 [第五步] 劫持内核 Makefile..."
-          # 如果 Makefile 里没写这个文件，强行追加
-          if ! grep -q "mt7981b-sl3000-emmc.dtb" "$K_DTS_DIR/Makefile"; then
-              echo "dtb-\$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb" >> "$K_DTS_DIR/Makefile"
-              echo "✅ 已将 dtb 规则写入 Makefile"
+          # 暴力修正内核 Makefile，确保 cc1 不会报找不到文件的错
+          if ! grep -q "mt7981b-sl3000-emmc.dtb" "$REAL_K_DIR/Makefile"; then
+              sed -i '/dtb-$(CONFIG_ARCH_MEDIATEK)/a dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' "$REAL_K_DIR/Makefile"
           fi
+          echo "🚀 编译现场已强制锁定: $REAL_K_DIR"
 
-      - name: 6. 最终固件编译
+      - name: 7. 最终固件编译
         working-directory: ${{ env.WORKDIR }}
         run: |
           export PATH=${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
-          
-          # 再次 defconfig 确保万无一失
           make defconfig
-          
-          echo "🚀 开始编译内核与镜像..."
-          # 仅编译 linux 部分，带详细日志
-          make target/linux/install -j$(nproc) V=s
-          
-          echo "📦 打包固件..."
+          echo "📦 正在生产内核与镜像..."
+          make target/linux/install -j$(nproc) V=i || make target/linux/install -j1 V=s
           make target/install -j$(nproc)
 
-      - name: 7. 上传结果
+      - name: 8. 上传固件
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: SL3000-Violence-Build
+          name: SL3000-Violence-Fixed
           path: ${{ env.WORKDIR }}/bin/targets/mediatek/filogic/*.bin
