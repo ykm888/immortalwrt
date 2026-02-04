@@ -1,14 +1,13 @@
 #!/bin/bash
 set -e
 
-echo ">>> [SL3000 Final] 正在同步 1GB 扩容配置..."
+echo ">>> [SL3000-Final-Fixed] 正在同步 1GB 物理配置..."
 
 ROOT_DIR=$(pwd)
-# 自动定位仓库根目录（兼容 GitHub Actions 环境）
 [ -z "$GITHUB_WORKSPACE" ] && GITHUB_WORKSPACE=$(cd ..; pwd)
 SRC_DIR="${GITHUB_WORKSPACE}/custom-config"
 
-# --- 1. 环境劫持 (解决 m4 报错) ---
+# --- 1. 宿主机环境劫持 (解决 m4/flex 报错) ---
 mkdir -p staging_dir/host/bin
 ln -sf /usr/bin/m4 staging_dir/host/bin/m4
 ln -sf /usr/bin/flex staging_dir/host/bin/flex
@@ -19,22 +18,13 @@ mkdir -p staging_dir/host/stamp
 touch staging_dir/host/stamp/.tools_compile_y
 touch staging_dir/host/stamp/.m4_installed
 
-# --- 2. 物理文件同步 (核心) ---
-# 同步 .config (来自你的 sl3000_defconfig)
-if [ -f "$SRC_DIR/sl3000_defconfig" ]; then
-    cp -fv "$SRC_DIR/sl3000_defconfig" .config
-else
-    echo "❌ 错误: 找不到 custom-config/sl3000_defconfig" && exit 1
-fi
+# --- 2. 核心文件同步 ---
+# 同步 .config
+[ -f "$SRC_DIR/sl3000_defconfig" ] && cp -fv "$SRC_DIR/sl3000_defconfig" .config || { echo "❌ 缺少 defconfig"; exit 1; }
+# 同步 1GB 镜像规则 (filogic.mk)
+[ -f "$SRC_DIR/filogic.mk" ] && cp -fv "$SRC_DIR/filogic.mk" target/linux/mediatek/image/filogic.mk || { echo "❌ 缺少 filogic.mk"; exit 1; }
 
-# 同步 filogic.mk (决定 1GB 大小)
-if [ -f "$SRC_DIR/filogic.mk" ]; then
-    cp -fv "$SRC_DIR/filogic.mk" target/linux/mediatek/image/filogic.mk
-else
-    echo "❌ 错误: 找不到 custom-config/filogic.mk" && exit 1
-fi
-
-# --- 3. DTS 物理缝合 (注入 1GB 内存定义) ---
+# --- 3. DTS 物理注入与缝合 ---
 BASE_DTSI=$(find "$ROOT_DIR/target/linux/mediatek" -name "mt7981.dtsi" | head -n 1)
 INC_DIR=$(dirname "$BASE_DTSI")
 DTS_DEST="$INC_DIR/mt7981b-sl3000-emmc.dts"
@@ -47,11 +37,11 @@ DTS_SRC="$SRC_DIR/mt7981b-sl3000-emmc.dts"
     echo '#include <dt-bindings/input/input.h>'
     sed -E '/\/dts-v1\/;|#include/d' "$BASE_DTSI"
     [ -f "$INC_DIR/mt7981b.dtsi" ] && sed -E '/\/dts-v1\/;|#include/d' "$INC_DIR/mt7981b.dtsi"
-    echo -e "\n/* --- SL3000 CUSTOM SECTION --- */\n"
+    echo -e "\n/* --- SL3000 1GB CUSTOM --- */\n"
     tr -d '\r' < "$DTS_SRC" | sed -E '/\/dts-v1\/;|#include|mt7981.dtsi/d'
 } > "$DTS_DEST"
 
-# --- 4. 刷新 Feeds 并锁定配置 ---
+# --- 4. 刷新 Feeds 并锁定非交互配置 ---
 ./scripts/feeds update -a && ./scripts/feeds install -a
 make defconfig
-echo "✅ [脚本完成] 劫持与 1GB 配置注入已就绪。"
+echo "✅ [脚本完成] 劫持已就绪，准备开始编译。"
