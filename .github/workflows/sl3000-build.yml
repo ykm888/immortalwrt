@@ -1,12 +1,10 @@
-name: build-sl3000-final-violence
+name: SL3000-1GB-Final-Fixed
 
 on:
   workflow_dispatch:
 
 env:
-  # 统一路径层级，防止递归嵌套
-  WORKDIR: ${{ github.workspace }}/immortalwrt
-  CONFDIR: ${{ github.workspace }}/custom-config
+  WORKDIR: openwrt
   SOURCE_REPO: https://github.com/immortalwrt/immortalwrt.git
   SOURCE_BRANCH: openwrt-24.10
 
@@ -14,75 +12,60 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      - name: 1. 预装系统工具
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential flex bison m4 gawk libtool-bin rsync unzip wget curl patch git-core gettext libncurses-dev zlib1g-dev libssl-dev libelf-dev python3 device-tree-compiler bc dos2unix
+      - name: 1. 检出本地仓库 (包含脚本和配置)
+        uses: actions/checkout@v4
 
-      - name: 2. 获取源码与配置
-        run: |
-          # 克隆主源码
-          git clone --depth=1 -b ${{ env.SOURCE_BRANCH }} ${{ env.SOURCE_REPO }} ${{ env.WORKDIR }}
-          # 克隆配置仓库
-          git clone https://github.com/${{ github.repository }}.git ${{ env.CONFDIR }}
+      - name: 2. 安装环境
+        run: sudo apt-get update && sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler bc dos2unix
 
-      - name: 3. 环境与 DTS 初始化注入
+      - name: 3. 克隆 ImmortalWrt 源码
+        run: git clone --depth=1 -b ${{ env.SOURCE_BRANCH }} ${{ env.SOURCE_REPO }} ${{ env.WORKDIR }}
+
+      - name: 4. 执行注入补丁 (修复路径查找)
         working-directory: ${{ env.WORKDIR }}
         run: |
-          # 修复点：使用绝对路径 ${{ env.CONFDIR }} 进行查找拷贝，避开 working-directory 的干扰
-          CLEAN_SH=$(find ${{ env.CONFDIR }} -name "clean-feeds.sh" | head -n 1)
-          if [ -n "$CLEAN_SH" ]; then
-            cp -v "$CLEAN_SH" ./clean-feeds.sh
-          else
-            echo "❌ 致命错误: 在 ${{ env.CONFDIR }} 中找不到 clean-feeds.sh"
-            exit 1
-          fi
-          chmod +x clean-feeds.sh
-          ./clean-feeds.sh
+          # 直接使用检出仓库里的脚本，避免路径迷失
+          chmod +x ../scripts/sl3000-patch.sh
+          ../scripts/sl3000-patch.sh
 
-      - name: 4. 编译 Host 工具链 (Tools)
+      - name: 5. 编译工具链
         working-directory: ${{ env.WORKDIR }}
         run: |
-          export PATH=${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
-          make tools/install -j$(nproc) || make tools/install -j1 V=s
+          export PATH=${{ github.workspace }}/${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
+          make tools/install -j$(nproc)
+          make toolchain/install -j$(nproc)
 
-      - name: 5. 编译交叉编译器 (Toolchain)
+      - name: 6. 内核初始化 (解决模块依赖)
         working-directory: ${{ env.WORKDIR }}
         run: |
-          export PATH=${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
-          make toolchain/install -j$(nproc) || make toolchain/install -j1 V=s
+          export PATH=${{ github.workspace }}/${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
+          make target/linux/compile -j$(nproc)
 
-      - name: 6. 内核 Prepare 与 编译现场“暴力回马枪”
+      - name: 7. 编译软件包
         working-directory: ${{ env.WORKDIR }}
         run: |
-          export PATH=${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
-          make target/linux/prepare -j$(nproc)
+          export PATH=${{ github.workspace }}/${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
+          make package/compile -j$(nproc) || make package/compile -j1 V=s
+
+      - name: 8. 锁定 DTS 并生成最终镜像
+        working-directory: ${{ env.WORKDIR }}
+        run: |
+          export PATH=${{ github.workspace }}/${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
           
-          # 寻找内核真正的编译目录
-          REAL_K_DIR=$(find build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | head -n 1)
+          # 寻找内核 DTS 目录并强制覆盖
+          K_DTS_DIR=$(find build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | head -n 1)
+          cp -fv "${{ github.workspace }}/fixed_files/sl3000.dts" "$K_DTS_DIR/mt7981b-sl3000-emmc.dts"
           
-          # 暴力注入 DTS
-          SRC_DTS=$(find ${{ env.CONFDIR }} -name "*mt7981b-sl3000-emmc.dts" | head -n 1)
-          cp -fv "$SRC_DTS" "$REAL_K_DIR/mt7981b-sl3000-emmc.dts"
+          # 修正内核 Makefile
+          sed -i '/mt7981b-sl3000-emmc.dtb/d' "$K_DTS_DIR/Makefile"
+          echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$K_DTS_DIR/Makefile"
           
-          # 暴力修正内核 Makefile (核心：确保生成 dtb)
-          if ! grep -q "mt7981b-sl3000-emmc.dtb" "$REAL_K_DIR/Makefile"; then
-              sed -i '/dtb-$(CONFIG_ARCH_MEDIATEK)/a dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' "$REAL_K_DIR/Makefile"
-          fi
-          echo "🚀 编译现场已强制锁定: $REAL_K_DIR"
-
-      - name: 7. 最终固件编译
-        working-directory: ${{ env.WORKDIR }}
-        run: |
-          export PATH=${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
-          make defconfig
-          echo "📦 正在生产内核与镜像..."
-          make target/linux/install -j$(nproc) V=i || make target/linux/install -j1 V=s
+          echo "📦 打包中..."
+          make target/linux/install -j$(nproc) || make target/linux/install -j1 V=s
           make target/install -j$(nproc)
 
-      - name: 8. 上传固件
-        if: success()
+      - name: 9. 上传固件
         uses: actions/upload-artifact@v4
         with:
-          name: SL3000-Final-Fixed
+          name: SL3000-Final-Image
           path: ${{ env.WORKDIR }}/bin/targets/mediatek/filogic/*.bin
