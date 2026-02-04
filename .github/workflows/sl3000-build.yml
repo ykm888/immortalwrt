@@ -4,8 +4,8 @@ on:
   workflow_dispatch:
 
 env:
+  # 统一路径层级，防止递归嵌套
   WORKDIR: ${{ github.workspace }}/immortalwrt
-  # 强制锁定配置目录名
   CONFDIR: ${{ github.workspace }}/custom-config
   SOURCE_REPO: https://github.com/immortalwrt/immortalwrt.git
   SOURCE_BRANCH: openwrt-24.10
@@ -19,19 +19,24 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential flex bison m4 gawk libtool-bin rsync unzip wget curl patch git-core gettext libncurses-dev zlib1g-dev libssl-dev libelf-dev python3 device-tree-compiler bc dos2unix
 
-      - name: 2. 获取源码与配置 (精准路径版)
+      - name: 2. 获取源码与配置
         run: |
-          # 克隆 OpenWrt 源码
+          # 克隆主源码
           git clone --depth=1 -b ${{ env.SOURCE_BRANCH }} ${{ env.SOURCE_REPO }} ${{ env.WORKDIR }}
-          # 暴力克隆你的配置仓库到指定目录
+          # 克隆配置仓库
           git clone https://github.com/${{ github.repository }}.git ${{ env.CONFDIR }}
 
       - name: 3. 环境与 DTS 初始化注入
         working-directory: ${{ env.WORKDIR }}
         run: |
-          # 原文逻辑：既然已知路径，直接精准拷贝
-          # 尝试从 scripts 目录或根目录找 clean-feeds.sh
-          cp -v ${{ env.CONFDIR }}/scripts/clean-feeds.sh ./ 2>/dev/null || cp -v ${{ env.CONFDIR }}/clean-feeds.sh ./
+          # 修复点：使用绝对路径 ${{ env.CONFDIR }} 进行查找拷贝，避开 working-directory 的干扰
+          CLEAN_SH=$(find ${{ env.CONFDIR }} -name "clean-feeds.sh" | head -n 1)
+          if [ -n "$CLEAN_SH" ]; then
+            cp -v "$CLEAN_SH" ./clean-feeds.sh
+          else
+            echo "❌ 致命错误: 在 ${{ env.CONFDIR }} 中找不到 clean-feeds.sh"
+            exit 1
+          fi
           chmod +x clean-feeds.sh
           ./clean-feeds.sh
 
@@ -53,14 +58,14 @@ jobs:
           export PATH=${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
           make target/linux/prepare -j$(nproc)
           
-          # 暴力寻找内核真正的编译目录
+          # 寻找内核真正的编译目录
           REAL_K_DIR=$(find build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | head -n 1)
           
-          # 从配置仓库暴力抓取 DTS
+          # 暴力注入 DTS
           SRC_DTS=$(find ${{ env.CONFDIR }} -name "*mt7981b-sl3000-emmc.dts" | head -n 1)
           cp -fv "$SRC_DTS" "$REAL_K_DIR/mt7981b-sl3000-emmc.dts"
           
-          # 暴力修正内核 Makefile，确保 cc1 不会报找不到文件的错
+          # 暴力修正内核 Makefile (核心：确保生成 dtb)
           if ! grep -q "mt7981b-sl3000-emmc.dtb" "$REAL_K_DIR/Makefile"; then
               sed -i '/dtb-$(CONFIG_ARCH_MEDIATEK)/a dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' "$REAL_K_DIR/Makefile"
           fi
@@ -79,5 +84,5 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: SL3000-Violence-Fixed
+          name: SL3000-Final-Fixed
           path: ${{ env.WORKDIR }}/bin/targets/mediatek/filogic/*.bin
