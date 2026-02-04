@@ -16,9 +16,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: 2. 安装环境
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler bc dos2unix libncurses5-dev libssl-dev
+        run: sudo apt-get update && sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler bc dos2unix
 
       - name: 3. 克隆源码
         run: git clone --depth=1 -b ${{ env.SOURCE_BRANCH }} ${{ env.SOURCE_REPO }} ${{ env.WORKDIR }}
@@ -36,29 +34,36 @@ jobs:
           make tools/install -j$(nproc)
           make toolchain/install -j$(nproc)
 
-      - name: 6. 核心：内核初始化 (修复 gpio-button 报错)
+      - name: 6. 内核初始化 (修复依赖)
         working-directory: ${{ env.WORKDIR }}
         run: |
           export PATH=${{ github.workspace }}/${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
-          # 这一步产生 .config 环境，让后续插件编译能找到依赖
           make target/linux/compile -j$(nproc)
 
-      - name: 7. 编译插件与打包镜像
+      - name: 7. 编译软件包
         working-directory: ${{ env.WORKDIR }}
         run: |
           export PATH=${{ github.workspace }}/${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
-          # 编译所有软件包
           make package/compile -j$(nproc) || make package/compile -j1 V=s
+
+      - name: 8. 彻底锁定 1GB DTS 并打包 (修复路径报错)
+        working-directory: ${{ env.WORKDIR }}
+        run: |
+          export PATH=${{ github.workspace }}/${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
           
-          # 确保 DTS 在最终打包前不被重置 (回马枪)
-          K_DIR=$(find build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | head -n 1)
-          cp -fv target/linux/mediatek/dts/mt7981b-sl3000-emmc.dts "$K_DIR/"
+          # 核心修复：直接从备份目录提取
+          K_DTS_DIR=$(find build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | head -n 1)
+          cp -fv "$(pwd)/sl3000_fixed/sl3000.dts" "$K_DTS_DIR/mt7981b-sl3000-emmc.dts"
           
-          # 执行打包
+          # 确保 Makefile 包含该 dtb
+          sed -i '/mt7981b-sl3000-emmc.dtb/d' "$K_DTS_DIR/Makefile"
+          echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$K_DTS_DIR/Makefile"
+          
+          echo "📦 正在执行打包..."
           make target/linux/install -j$(nproc) || make target/linux/install -j1 V=s
           make target/install -j$(nproc)
 
-      - name: 8. 上传 1GB 专属固件
+      - name: 9. 上传 1GB 专属固件
         uses: actions/upload-artifact@v4
         with:
           name: SL3000-1GB-Edition
