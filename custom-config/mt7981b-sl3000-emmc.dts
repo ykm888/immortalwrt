@@ -19,10 +19,8 @@
 
 	chosen {
 		stdout-path = "serial0:115200n8";
-		bootargs = "root=PARTLABEL=production rootwait";
 	};
 
-	/* 旗舰版 1GB 内存定义 (256M*4 寻址) */
 	memory@40000000 {
 		device_type = "memory";
 		reg = <0x0 0x40000000 0x0 0x40000000>;
