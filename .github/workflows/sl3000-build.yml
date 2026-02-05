@@ -1,4 +1,4 @@
-name: SL3000-Ultimate-Success-V10
+name: SL3000-Ultimate-Success-V11
 
 on:
   workflow_dispatch:
@@ -15,83 +15,81 @@ jobs:
       - name: 1. 检出仓库代码
         uses: actions/checkout@v4
 
-      - name: 2. 磁盘清理与安全扩展 Swap (延续修复：防止 Text file busy)
+      - name: 2. [延续修复] 解决磁盘与 Swap 锁定
         run: |
-          sudo rm -rf /usr/share/dotnet /opt/ghc /var/lib/docker /usr/local/lib/android /opt/hostedtoolcache/CodeQL || true
-          # 核心修复点：必须先禁用 swap 才能重新 fallocate
+          sudo rm -rf /usr/share/dotnet /opt/ghc /var/lib/docker || true
+          # 彻底关闭 swap 防止 Text file busy
           sudo swapoff -a || true
           sudo rm -f /swapfile || true
           sudo fallocate -l 10G /swapfile
           sudo chmod 600 /swapfile
           sudo mkswap /swapfile
           sudo swapon /swapfile
-          free -m
 
-      - name: 3. 安装环境依赖
+      - name: 3. 安装依赖并克隆源码
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler bc dos2unix libncurses5-dev libssl-dev
           git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git ${{ env.WORKDIR }}
 
-      - name: 4. 执行注入脚本 (延续修复：标识符与模具对齐)
+      - name: 4. 执行注入脚本 (延续所有补丁)
         run: |
           chmod +x scripts/sl3000-patch.sh
           ./scripts/sl3000-patch.sh
 
-      - name: 5. 编译 Host 工具链 (延续修复：Bison 路径优先)
+      - name: 5. 编译 Host 工具链
         working-directory: ${{ env.WORKDIR }}
         run: |
           export PATH=/usr/bin:$PATH
           make tools/install -j$(nproc) || make tools/install -j1 V=s
           make toolchain/install -j$(nproc) || make toolchain/install -j1 V=s
 
-      - name: 6. [延续修复] 内核源码解压与 DTS 物理注入
+      - name: 6. [核心动作] 内核解压与 DTS 强制空投
         working-directory: ${{ env.WORKDIR }}
         run: |
-          # 核心修复点：先解压内核源码
+          # 第一步：强制解压内核（解决 No such file or directory 的根本）
           make target/linux/prepare -j$(nproc)
           
-          # 动态寻找路径，延续 V8/V9 的成功经验
+          # 第二步：动态寻找内核路径
           K_DTS_DIR=$(find build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | head -n 1)
-          echo "🎯 目标内核路径: $K_DTS_DIR"
+          echo "🎯 目标路径确认: $K_DTS_DIR"
           
+          # 第三步：物理搬运 DTS 文件
           if [ -f "custom_files/mt7981b-sl3000-emmc.dts" ]; then
-            cp -fv custom_files/mt7981b-sl3000-emmc.dts "$K_DTS_DIR/"
+            cp -fv "custom_files/mt7981b-sl3000-emmc.dts" "$K_DTS_DIR/"
             
-            # 在内核 Makefile 中强行注册 (双重保险)
+            # 第四步：强行在内核 Makefile 注册
             K_MAKEFILE="$K_DTS_DIR/Makefile"
             if ! grep -q "mt7981b-sl3000-emmc.dtb" "$K_MAKEFILE"; then
               echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$K_MAKEFILE"
             fi
           else
-            echo "❌ 错误：在 custom_files 中找不到源文件，请检查 patch.sh！"
+            echo "❌ 失败：中转站里没有 DTS 文件，请检查脚本 Step 4！"
             exit 1
           fi
 
-      - name: 7. 执行全量编译 (延续修复：环境变量加固)
+      - name: 7. [延续修复] 最终编译与镜像合成
         working-directory: ${{ env.WORKDIR }}
         run: |
-          # 彻底解决编译时的 bison 报错
+          # 延续修复：彻底封锁 bison/m4 语法报错
           export BISON_PKGDATADIR=/usr/share/bison
           export M4=/usr/bin/m4
           export PATH=/usr/bin:${{ github.workspace }}/${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
           
-          # 清理旧产物，开始最终合成
-          rm -rf bin/targets/mediatek/filogic/*
+          # 编译并生成
           make target/linux/compile -j$(nproc) V=s
           make target/install -j$(nproc) V=s
           
-          # 产物生成检查 (延续 V9 的判定逻辑)
-          ls -lh bin/targets/mediatek/filogic/
+          # 最终产物校验
           if [ -z "$(ls bin/targets/mediatek/filogic/*sl3000-emmc-sysupgrade.bin 2>/dev/null)" ]; then
-            echo "❌ 严重错误：固件未生成！请检查 Step 6 注入路径。"
+            echo "❌ 错误：固件依然没生成，请检查 Step 6 注入日志！"
             exit 1
           fi
 
-      - name: 8. 发布固件
+      - name: 8. 发布 Release
         uses: softprops/action-gh-release@v2
         if: success()
         with:
-          tag_name: SL3000-Pro-Max-${{ github.run_id }}
+          tag_name: SL3000-Success-${{ github.run_id }}
           files: ${{ env.WORKDIR }}/bin/targets/mediatek/filogic/*sl3000-emmc-sysupgrade.bin
           token: ${{ secrets.GITHUB_TOKEN }}
