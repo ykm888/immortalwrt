@@ -1,4 +1,4 @@
-name: SL3000-Ultimate-Factory-V3
+name: SL3000-Ultimate-Factory-V4
 
 on:
   workflow_dispatch:
@@ -15,14 +15,10 @@ jobs:
       - name: 1. 检出配置仓库
         uses: actions/checkout@v4
 
-      - name: 2. 极致性能调优 (安全处理 Swap 与 磁盘清理)
+      - name: 2. 环境清理与 Swap 动态扩容
         run: |
-          # 1. 强力清理磁盘空间
           sudo docker image prune -a -f || true
-          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/powershell /usr/share/swift /var/lib/docker || true
-          sudo apt-get clean
-          
-          # 2. 安全创建 8G Swap (预防 Text file busy)
+          sudo rm -rf /usr/share/dotnet /opt/ghc /var/lib/docker || true
           if [ -f /swapfile ]; then
             sudo swapoff /swapfile || true
             sudo rm -f /swapfile
@@ -31,56 +27,47 @@ jobs:
           sudo chmod 600 /swapfile
           sudo mkswap /swapfile
           sudo swapon /swapfile
-          free -h
 
-      - name: 3. 构建环境硬化
+      - name: 3. 构建依赖安装
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler bc dos2unix libncurses5-dev libssl-dev ccache
-          # 克隆指定分支
           git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git ${{ env.WORKDIR }}
 
-      - name: 4. 执行专属注入 (基因清洗)
+      - name: 4. 执行专属注入
         run: |
           chmod +x scripts/sl3000-patch.sh
           ./scripts/sl3000-patch.sh
 
-      - name: 5. 编译基础工具链
+      - name: 5. 编译基础工具链 (关键路径保护)
         working-directory: ${{ env.WORKDIR }}
         run: |
-          # 强制将劫持工具链放在首位
           export PATH=${{ github.workspace }}/${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
           make tools/install -j$(nproc) || make tools/install -j1 V=s
           make toolchain/install -j$(nproc) || make toolchain/install -j1 V=s
 
-      - name: 6. [核心锁死] 全路径 DTS 劫持与 Makefile 注册
+      - name: 6. [核心锁死] DTS 全路径覆盖与 Makefile 劫持
         working-directory: ${{ env.WORKDIR }}
         run: |
-          # 强制解压内核源码，确保目录生成
           make target/linux/prepare -j$(nproc)
-          
-          # 动态搜索内核 DTS 物理路径
           K_DTS_DIR=$(find build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | head -n 1)
-          echo "🎯 命中内核路径: $K_DTS_DIR"
-          
-          # 双路注入 (父目录与子目录各塞一份，解决路径错位)
           cp -fv custom_files/mt7981b-sl3000-emmc.dts "$K_DTS_DIR/"
           cp -fv custom_files/mt7981b-sl3000-emmc.dts "$(dirname "$K_DTS_DIR")/"
-          
-          # 暴力劫持 Makefile：精准找到 dtb 注册行并插入
           K_MAKEFILE="$K_DTS_DIR/Makefile"
           if ! grep -q "mt7981b-sl3000-emmc.dtb" "$K_MAKEFILE"; then
             sed -i '/dtb-$(CONFIG_ARCH_MEDIATEK)/a \dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' "$K_MAKEFILE"
-            echo "✅ 已成功篡改 Makefile: $K_MAKEFILE"
           fi
 
-      - name: 7. 全量编译与镜像合成 (带日志记录)
+      - name: 7. 极速全量编译 (环境变量硬化)
         working-directory: ${{ env.WORKDIR }}
         run: |
+          # 强制指定 bison 寻找路径，解决 m4sugar.m4 缺失问题
+          export BISON_PKGDATADIR=/usr/share/bison
+          export M4=/usr/bin/m4
           export PATH=${{ github.workspace }}/${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
-          # 优先编译内核，锁定 root-mediatek
+          
+          # 编译并记录日志
           make target/linux/compile -j$(nproc) 2>&1 | tee -a ../build.log
-          # 全量包与最终镜像打包
           make package/compile -j$(nproc) 2>&1 | tee -a ../build.log
           make target/install -j$(nproc) 2>&1 | tee -a ../build.log
 
@@ -90,26 +77,18 @@ jobs:
         with:
           tag_name: SL3000-ProMax-${{ github.run_id }}
           files: ${{ env.WORKDIR }}/bin/targets/mediatek/filogic/*.bin
-          body: |
-            ### SL3000 Pro Max 旗舰版
-            - **规格**: 1GB RAM / 1GB eMMC
-            - **内核**: 6.6 (ImmortalWrt 24.10)
-            - **特性**: 物理级内核劫持注入，8G Swap 稳定性增强
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 🔍 故障深度诊断 (仅在失败时运行)
+      - name: 🔍 故障深度诊断
         if: failure()
         run: |
-          echo "==================== 🚨 错误诊断报告 🚨 ===================="
-          if grep -qi "syntax error" build.log; then
-            echo "❌ [结果]: DTS 硬件定义文件语法错误！请检查分号或大括号。"
-          elif grep -qi "signal 9" build.log || grep -qi "Out of memory" build.log; then
-            echo "❌ [结果]: 内存溢出 (OOM)！请尝试减少插件。"
-          elif grep -qi "No such file or directory" build.log; then
-            echo "❌ [结果]: 路径错位！注入脚本未能命中内核目录。"
+          echo "==================== 🚨 ERROR ANALYSIS 🚨 ===================="
+          if grep -qi "m4sugar.m4" build.log; then
+             echo "❌ [诊断]: 依然存在工具链路径冲突！"
+          elif grep -qi "syntax error" build.log; then
+             echo "❌ [诊断]: DTS 语法错误。"
           else
-            echo "❌ [结果]: 未知编译错误，请查看下方日志末尾。"
+             echo "❌ [诊断]: 未知错误，请检查下方日志。"
           fi
-          echo "-------------------- 📄 最近 50 行错误日志 --------------------"
-          [ -f build.log ] && tail -n 50 build.log || echo "未找到 build.log"
+          tail -n 100 build.log
           echo "=============================================================="
