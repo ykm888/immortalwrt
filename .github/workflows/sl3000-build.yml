@@ -1,4 +1,4 @@
-name: SL3000-Ultimate-Factory-V6
+name: SL3000-Ultimate-Success-V8
 
 on:
   workflow_dispatch:
@@ -12,68 +12,76 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: 1. 检出
+      - name: 1. 检出仓库代码
         uses: actions/checkout@v4
 
       - name: 2. 磁盘清理与 Swap 扩展
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /var/lib/docker || true
-          if [ -f /swapfile ]; then sudo swapoff /swapfile || true && sudo rm -f /swapfile; fi
-          sudo fallocate -l 8G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
+          sudo fallocate -l 12G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
 
-      - name: 3. 安装依赖并克隆源码
+      - name: 3. 依赖安装
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler bc dos2unix libncurses5-dev libssl-dev
           git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git ${{ env.WORKDIR }}
 
-      - name: 4. 执行脚本注入
+      - name: 4. 执行注入脚本
         run: |
           chmod +x scripts/sl3000-patch.sh
           ./scripts/sl3000-patch.sh
 
-      - name: 5. 编译基础工具链
+      - name: 5. 编译 Host 工具链
         working-directory: ${{ env.WORKDIR }}
         run: |
-          export PATH=${{ github.workspace }}/${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
+          # 确保全局 bison 路径优先
+          export PATH=/usr/bin:$PATH
           make tools/install -j$(nproc) || make tools/install -j1 V=s
           make toolchain/install -j$(nproc) || make toolchain/install -j1 V=s
 
-      - name: 6. [关键] 内核 DTS 深度注入
+      - name: 6. [核心锁死] 内核源码准备与 DTS 物理注入
         working-directory: ${{ env.WORKDIR }}
         run: |
-          # 强行展开内核源码
+          # 强制展开内核源码树
           make target/linux/prepare -j$(nproc)
-          # 动态寻找内核 mediatek DTS 目录 (解决路径随机名问题)
+          
+          # 查找真正的 Mediatek DTS 存放点
           K_DTS_DIR=$(find build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | head -n 1)
-          echo "🎯 命中内核路径: $K_DTS_DIR"
+          echo "🎯 目标内核路径: $K_DTS_DIR"
           
-          # 空投 DTS
-          cp -fv custom_files/mt7981b-sl3000-emmc.dts "$K_DTS_DIR/"
+          # 物理空投：从脚本准备好的 custom_files 搬运
+          if [ -f "custom_files/mt7981b-sl3000-emmc.dts" ]; then
+            cp -fv custom_files/mt7981b-sl3000-emmc.dts "$K_DTS_DIR/"
+          else
+            echo "❌ 错误：在 custom_files 中找不到 DTS 文件！"
+            exit 1
+          fi
           
-          # 注册 DTB 到 Makefile (确保内核知道要编它)
+          # Makefile 强行注册 (防止内核不识别该 DTS)
           K_MAKEFILE="$K_DTS_DIR/Makefile"
-          sed -i '/mt7981b-sl3000-emmc.dtb/d' "$K_MAKEFILE"
-          echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$K_MAKEFILE"
+          if ! grep -q "mt7981b-sl3000-emmc.dtb" "$K_MAKEFILE"; then
+            echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$K_MAKEFILE"
+          fi
 
-      - name: 7. 全量编译与镜像强检
+      - name: 7. 执行最终编译 (针对性加固)
         working-directory: ${{ env.WORKDIR }}
         run: |
+          # 彻底解决 bison 寻址错误
           export BISON_PKGDATADIR=/usr/share/bison
-          export PATH=${{ github.workspace }}/${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
+          export M4=/usr/bin/m4
+          export PATH=/usr/bin:${{ github.workspace }}/${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
           
-          # 执行编译
-          make target/linux/compile -j$(nproc)
-          make package/compile -j$(nproc)
+          # 清理历史残余产物
+          rm -rf bin/targets/mediatek/filogic/*
+          
+          # 开始生成固件
+          make target/linux/compile -j$(nproc) V=s
           make target/install -j$(nproc) V=s
           
-          # 【产物检查逻辑】
-          echo "==== 最终产物列表 ===="
+          # 产物校验
           ls -lh bin/targets/mediatek/filogic/
-          
-          # 判定：如果没有生成带 sl3000 名字的固件，直接报错停止任务
           if [ -z "$(ls bin/targets/mediatek/filogic/*sl3000-emmc-sysupgrade.bin 2>/dev/null)" ]; then
-            echo "❌ 严重错误：固件未生成！请检查 filogic.mk 里的 DEVICE_DTS_DIR 是否为 \$(DTS_DIR)/mediatek"
+            echo "❌ 严重错误：未生成 sysupgrade.bin，请回溯 Step 6 的文件路径！"
             exit 1
           fi
 
@@ -81,7 +89,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: success()
         with:
-          tag_name: SL3000-Ultimate-${{ github.run_id }}
-          # 只发布 sysupgrade.bin，拒绝 bl2/fip 干扰
+          tag_name: SL3000-Release-${{ github.run_id }}
           files: ${{ env.WORKDIR }}/bin/targets/mediatek/filogic/*sl3000-emmc-sysupgrade.bin
           token: ${{ secrets.GITHUB_TOKEN }}
