@@ -1,4 +1,4 @@
-name: SL3000-ProMax-Final-Fixed
+name: SL3000-Ultimate-Pro-Max-Plus
 
 on:
   workflow_dispatch:
@@ -13,67 +13,63 @@ jobs:
       - name: 1. 检出配置
         uses: actions/checkout@v4
 
-      - name: 2. 磁盘与 Swap 优化 (预防 1GB 镜像打包崩溃)
+      - name: 2. 极致性能调优 (Swap & Cache)
         run: |
           sudo docker image prune -a -f
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /var/lib/docker
+          sudo rm -rf /usr/share/dotnet /opt/ghc /var/lib/docker
           sudo apt-get clean
-          sudo fallocate -l 4G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
+          sudo fallocate -l 8G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
 
-      - name: 3. 构建环境与源码同步
+      - name: 3. 开启全量编译缓存
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.WORKDIR }}/.ccache
+          key: ${{ runner.os }}-openwrt-ccache-${{ hashFiles('**/config') }}
+          restore-keys: |
+            ${{ runner.os }}-openwrt-ccache-
+
+      - name: 4. 构建环境硬化
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler bc dos2unix libncurses5-dev libssl-dev
+          sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler bc dos2unix libncurses5-dev libssl-dev ccache
           git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git ${{ env.WORKDIR }}
 
-      - name: 4. 执行基因注入
+      - name: 5. 执行内核级劫持
         run: |
           chmod +x scripts/sl3000-patch.sh
           ./scripts/sl3000-patch.sh
 
-      - name: 5. 编译基础工具链
-        working-directory: ${{ env.WORKDIR }}
-        run: |
-          # 强制将劫持工具链放在首位
-          export PATH=${{ github.workspace }}/${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
-          make tools/install -j$(nproc) || make tools/install -j1 V=s
-          make toolchain/install -j$(nproc) || make toolchain/install -j1 V=s
-
-      - name: 6. 核心阶段：全路径 DTS 劫持
+      - name: 6. [终极锁死] 内核补丁化注入
         working-directory: ${{ env.WORKDIR }}
         run: |
           make target/linux/prepare -j$(nproc)
           
-          # 动态搜索所有 DTS 根目录并实施“断后”注入
-          find build_dir -path "*/arch/arm64/boot/dts" -type d | while read -r dts_root; do
-            echo "🎯 正在对齐路径: $dts_root"
-            cp -fv custom_files/mt7981b-sl3000-emmc.dts "$dts_root/"
-            mkdir -p "$dts_root/mediatek"
-            cp -fv custom_files/mt7981b-sl3000-emmc.dts "$dts_root/mediatek/"
-            
-            # 递归劫持 Makefile，增加防御性判断
-            find "$dts_root" -maxdepth 2 -name "Makefile" | while read -r mk; do
-              if ! grep -q "mt7981b-sl3000-emmc.dtb" "$mk"; then
-                sed -i '/dtb-$(CONFIG_ARCH_MEDIATEK)/a \dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' "$mk"
-                echo "✅ 已成功篡改: $mk"
-              fi
-            done
-          done
+          # 寻找内核 DTS 物理路径
+          K_DTS_DIR=$(find build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | head -n 1)
+          cp -fv custom_files/mt7981b-sl3000-emmc.dts "$K_DTS_DIR/"
+          
+          # 暴力注册进内核 Makefile (核心：确保 dtbs 阶段必定编译此文件)
+          K_MAKEFILE="$K_DTS_DIR/Makefile"
+          sed -i '/mt7981b-sl3000-emmc.dtb/d' "$K_MAKEFILE"
+          echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$K_MAKEFILE"
+          
+          # 额外加固：在父目录也塞一份，彻底解决“路径错位”
+          cp -fv custom_files/mt7981b-sl3000-emmc.dts "$(dirname "$K_DTS_DIR")/"
 
-      - name: 7. 全量编译与镜像合成
+      - name: 7. 极速全量编译
         working-directory: ${{ env.WORKDIR }}
         run: |
-          export PATH=${{ github.workspace }}/${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
-          # 优先攻克内核，确保存储架构被识别
+          export PATH="/usr/lib/ccache:${{ github.workspace }}/${{ env.WORKDIR }}/staging_dir/host/bin:$PATH"
+          export CCACHE_DIR="${{ github.workspace }}/${{ env.WORKDIR }}/.ccache"
+          # 核心编译：先内核，后包，最后打包
           make target/linux/compile -j$(nproc) || make target/linux/compile -j1 V=s
-          # 全量包与打包逻辑
           make package/compile -j$(nproc) || make package/compile -j1 V=s
           make target/install -j$(nproc) || make target/install -j1 V=s
 
-      - name: 8. 发布工厂固件
+      - name: 8. 成果发布
         uses: softprops/action-gh-release@v2
         if: success()
         with:
-          tag_name: SL3000-ProMax-${{ github.run_id }}
+          tag_name: SL3000-Evolution-${{ github.run_id }}
           files: ${{ env.WORKDIR }}/bin/targets/mediatek/filogic/*.bin
           token: ${{ secrets.GITHUB_TOKEN }}
