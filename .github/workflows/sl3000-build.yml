@@ -1,4 +1,4 @@
-name: SL3000-Ultimate-Factory-V4
+name: SL3000-Ultimate-Factory-V6
 
 on:
   workflow_dispatch:
@@ -12,83 +12,76 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: 1. 检出配置仓库
+      - name: 1. 检出
         uses: actions/checkout@v4
 
-      - name: 2. 环境清理与 Swap 动态扩容
+      - name: 2. 磁盘清理与 Swap 扩展
         run: |
-          sudo docker image prune -a -f || true
           sudo rm -rf /usr/share/dotnet /opt/ghc /var/lib/docker || true
-          if [ -f /swapfile ]; then
-            sudo swapoff /swapfile || true
-            sudo rm -f /swapfile
-          fi
-          sudo fallocate -l 8G /swapfile
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
+          if [ -f /swapfile ]; then sudo swapoff /swapfile || true && sudo rm -f /swapfile; fi
+          sudo fallocate -l 8G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
 
-      - name: 3. 构建依赖安装
+      - name: 3. 安装依赖并克隆源码
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler bc dos2unix libncurses5-dev libssl-dev ccache
+          sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler bc dos2unix libncurses5-dev libssl-dev
           git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git ${{ env.WORKDIR }}
 
-      - name: 4. 执行专属注入
+      - name: 4. 执行脚本注入
         run: |
           chmod +x scripts/sl3000-patch.sh
           ./scripts/sl3000-patch.sh
 
-      - name: 5. 编译基础工具链 (关键路径保护)
+      - name: 5. 编译基础工具链
         working-directory: ${{ env.WORKDIR }}
         run: |
           export PATH=${{ github.workspace }}/${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
           make tools/install -j$(nproc) || make tools/install -j1 V=s
           make toolchain/install -j$(nproc) || make toolchain/install -j1 V=s
 
-      - name: 6. [核心锁死] DTS 全路径覆盖与 Makefile 劫持
+      - name: 6. [关键] 内核 DTS 深度注入
         working-directory: ${{ env.WORKDIR }}
         run: |
+          # 强行展开内核源码
           make target/linux/prepare -j$(nproc)
+          # 动态寻找内核 mediatek DTS 目录 (解决路径随机名问题)
           K_DTS_DIR=$(find build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | head -n 1)
+          echo "🎯 命中内核路径: $K_DTS_DIR"
+          
+          # 空投 DTS
           cp -fv custom_files/mt7981b-sl3000-emmc.dts "$K_DTS_DIR/"
-          cp -fv custom_files/mt7981b-sl3000-emmc.dts "$(dirname "$K_DTS_DIR")/"
+          
+          # 注册 DTB 到 Makefile (确保内核知道要编它)
           K_MAKEFILE="$K_DTS_DIR/Makefile"
-          if ! grep -q "mt7981b-sl3000-emmc.dtb" "$K_MAKEFILE"; then
-            sed -i '/dtb-$(CONFIG_ARCH_MEDIATEK)/a \dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' "$K_MAKEFILE"
-          fi
+          sed -i '/mt7981b-sl3000-emmc.dtb/d' "$K_MAKEFILE"
+          echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$K_MAKEFILE"
 
-      - name: 7. 极速全量编译 (环境变量硬化)
+      - name: 7. 全量编译与镜像强检
         working-directory: ${{ env.WORKDIR }}
         run: |
-          # 强制指定 bison 寻找路径，解决 m4sugar.m4 缺失问题
           export BISON_PKGDATADIR=/usr/share/bison
-          export M4=/usr/bin/m4
           export PATH=${{ github.workspace }}/${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
           
-          # 编译并记录日志
-          make target/linux/compile -j$(nproc) 2>&1 | tee -a ../build.log
-          make package/compile -j$(nproc) 2>&1 | tee -a ../build.log
-          make target/install -j$(nproc) 2>&1 | tee -a ../build.log
+          # 执行编译
+          make target/linux/compile -j$(nproc)
+          make package/compile -j$(nproc)
+          make target/install -j$(nproc) V=s
+          
+          # 【产物检查逻辑】
+          echo "==== 最终产物列表 ===="
+          ls -lh bin/targets/mediatek/filogic/
+          
+          # 判定：如果没有生成带 sl3000 名字的固件，直接报错停止任务
+          if [ -z "$(ls bin/targets/mediatek/filogic/*sl3000-emmc-sysupgrade.bin 2>/dev/null)" ]; then
+            echo "❌ 严重错误：固件未生成！请检查 filogic.mk 里的 DEVICE_DTS_DIR 是否为 \$(DTS_DIR)/mediatek"
+            exit 1
+          fi
 
-      - name: 8. 发布工厂固件
+      - name: 8. 发布固件
         uses: softprops/action-gh-release@v2
         if: success()
         with:
-          tag_name: SL3000-ProMax-${{ github.run_id }}
-          files: ${{ env.WORKDIR }}/bin/targets/mediatek/filogic/*.bin
+          tag_name: SL3000-Ultimate-${{ github.run_id }}
+          # 只发布 sysupgrade.bin，拒绝 bl2/fip 干扰
+          files: ${{ env.WORKDIR }}/bin/targets/mediatek/filogic/*sl3000-emmc-sysupgrade.bin
           token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: 🔍 故障深度诊断
-        if: failure()
-        run: |
-          echo "==================== 🚨 ERROR ANALYSIS 🚨 ===================="
-          if grep -qi "m4sugar.m4" build.log; then
-             echo "❌ [诊断]: 依然存在工具链路径冲突！"
-          elif grep -qi "syntax error" build.log; then
-             echo "❌ [诊断]: DTS 语法错误。"
-          else
-             echo "❌ [诊断]: 未知错误，请检查下方日志。"
-          fi
-          tail -n 100 build.log
-          echo "=============================================================="
