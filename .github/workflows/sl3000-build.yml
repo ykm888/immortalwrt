@@ -1,4 +1,4 @@
-name: SL3000-Ultimate-Fixed
+name: SL3000-Ultimate-Factory-V3
 
 on:
   workflow_dispatch:
@@ -9,17 +9,20 @@ env:
 jobs:
   build:
     runs-on: ubuntu-22.04
+    permissions:
+      contents: write
     steps:
-      - name: 1. 检出配置
+      - name: 1. 检出配置仓库
         uses: actions/checkout@v4
 
-      - name: 2. 极致性能调优 (安全处理 Swap)
+      - name: 2. 极致性能调优 (安全处理 Swap 与 磁盘清理)
         run: |
-          # 1. 空间清理
+          # 1. 强力清理磁盘空间
           sudo docker image prune -a -f || true
-          sudo rm -rf /usr/share/dotnet /opt/ghc /var/lib/docker || true
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/powershell /usr/share/swift /var/lib/docker || true
+          sudo apt-get clean
           
-          # 2. 安全创建 8G Swap (解决 Text file busy)
+          # 2. 安全创建 8G Swap (预防 Text file busy)
           if [ -f /swapfile ]; then
             sudo swapoff /swapfile || true
             sudo rm -f /swapfile
@@ -30,55 +33,83 @@ jobs:
           sudo swapon /swapfile
           free -h
 
-      - name: 3. 开启全量编译缓存
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.WORKDIR }}/.ccache
-          key: ${{ runner.os }}-openwrt-ccache-${{ hashFiles('**/config') }}
-          restore-keys: |
-            ${{ runner.os }}-openwrt-ccache-
-
-      - name: 4. 构建环境硬化
+      - name: 3. 构建环境硬化
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler bc dos2unix libncurses5-dev libssl-dev ccache
+          # 克隆指定分支
           git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git ${{ env.WORKDIR }}
 
-      - name: 5. 执行内核级劫持
+      - name: 4. 执行专属注入 (基因清洗)
         run: |
           chmod +x scripts/sl3000-patch.sh
           ./scripts/sl3000-patch.sh
 
-      - name: 6. [终极锁死] DTS 路径全覆盖
+      - name: 5. 编译基础工具链
         working-directory: ${{ env.WORKDIR }}
         run: |
+          # 强制将劫持工具链放在首位
+          export PATH=${{ github.workspace }}/${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
+          make tools/install -j$(nproc) || make tools/install -j1 V=s
+          make toolchain/install -j$(nproc) || make toolchain/install -j1 V=s
+
+      - name: 6. [核心锁死] 全路径 DTS 劫持与 Makefile 注册
+        working-directory: ${{ env.WORKDIR }}
+        run: |
+          # 强制解压内核源码，确保目录生成
           make target/linux/prepare -j$(nproc)
           
-          # 锁定内核 DTS 目录
+          # 动态搜索内核 DTS 物理路径
           K_DTS_DIR=$(find build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | head -n 1)
+          echo "🎯 命中内核路径: $K_DTS_DIR"
           
-          # 双路注入
+          # 双路注入 (父目录与子目录各塞一份，解决路径错位)
           cp -fv custom_files/mt7981b-sl3000-emmc.dts "$K_DTS_DIR/"
           cp -fv custom_files/mt7981b-sl3000-emmc.dts "$(dirname "$K_DTS_DIR")/"
           
-          # Makefile 暴力注册
-          sed -i '/mt7981b-sl3000-emmc.dtb/d' "$K_DTS_DIR/Makefile"
-          echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$K_DTS_DIR/Makefile"
+          # 暴力劫持 Makefile：精准找到 dtb 注册行并插入
+          K_MAKEFILE="$K_DTS_DIR/Makefile"
+          if ! grep -q "mt7981b-sl3000-emmc.dtb" "$K_MAKEFILE"; then
+            sed -i '/dtb-$(CONFIG_ARCH_MEDIATEK)/a \dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' "$K_MAKEFILE"
+            echo "✅ 已成功篡改 Makefile: $K_MAKEFILE"
+          fi
 
-      - name: 7. 极速全量编译
+      - name: 7. 全量编译与镜像合成 (带日志记录)
         working-directory: ${{ env.WORKDIR }}
         run: |
-          export PATH="/usr/lib/ccache:${{ github.workspace }}/${{ env.WORKDIR }}/staging_dir/host/bin:$PATH"
-          export CCACHE_DIR="${{ github.workspace }}/${{ env.WORKDIR }}/.ccache"
-          # 核心流程
-          make target/linux/compile -j$(nproc) || make target/linux/compile -j1 V=s
-          make package/compile -j$(nproc) || make package/compile -j1 V=s
-          make target/install -j$(nproc) || make target/install -j1 V=s
+          export PATH=${{ github.workspace }}/${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
+          # 优先编译内核，锁定 root-mediatek
+          make target/linux/compile -j$(nproc) 2>&1 | tee -a ../build.log
+          # 全量包与最终镜像打包
+          make package/compile -j$(nproc) 2>&1 | tee -a ../build.log
+          make target/install -j$(nproc) 2>&1 | tee -a ../build.log
 
-      - name: 8. 成果发布
+      - name: 8. 发布工厂固件
         uses: softprops/action-gh-release@v2
         if: success()
         with:
-          tag_name: SL3000-Factory-${{ github.run_id }}
+          tag_name: SL3000-ProMax-${{ github.run_id }}
           files: ${{ env.WORKDIR }}/bin/targets/mediatek/filogic/*.bin
+          body: |
+            ### SL3000 Pro Max 旗舰版
+            - **规格**: 1GB RAM / 1GB eMMC
+            - **内核**: 6.6 (ImmortalWrt 24.10)
+            - **特性**: 物理级内核劫持注入，8G Swap 稳定性增强
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🔍 故障深度诊断 (仅在失败时运行)
+        if: failure()
+        run: |
+          echo "==================== 🚨 错误诊断报告 🚨 ===================="
+          if grep -qi "syntax error" build.log; then
+            echo "❌ [结果]: DTS 硬件定义文件语法错误！请检查分号或大括号。"
+          elif grep -qi "signal 9" build.log || grep -qi "Out of memory" build.log; then
+            echo "❌ [结果]: 内存溢出 (OOM)！请尝试减少插件。"
+          elif grep -qi "No such file or directory" build.log; then
+            echo "❌ [结果]: 路径错位！注入脚本未能命中内核目录。"
+          else
+            echo "❌ [结果]: 未知编译错误，请查看下方日志末尾。"
+          fi
+          echo "-------------------- 📄 最近 50 行错误日志 --------------------"
+          [ -f build.log ] && tail -n 50 build.log || echo "未找到 build.log"
+          echo "=============================================================="
