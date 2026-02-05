@@ -1,48 +1,40 @@
 #!/bin/bash
 set -e
 
-# 定位路径
 REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd)
 WORKDIR="${REPO_ROOT}/openwrt"
 SRC_DIR="${REPO_ROOT}/custom-config"
 
-echo "💎 [SL3000 Final Audit] 正在执行工具链硬链接与基因锁定..."
+echo "💎 [SL3000] 正在执行最后的逻辑对齐..."
 
-# 1. 注入镜像生成规则
+# 1. 注入镜像模具
 mkdir -p "${WORKDIR}/target/linux/mediatek/image"
 cp -fv "${SRC_DIR}/filogic.mk" "${WORKDIR}/target/linux/mediatek/image/filogic.mk"
 
-# 2. 构造无损 DTS
+# 2. DTS 准备
 mkdir -p "${WORKDIR}/custom_files"
-{ 
-    echo '/dts-v1/;'
-    grep -v "/dts-v1/;" "${SRC_DIR}/mt7981b-sl3000-emmc.dts" | tr -d '\r'
-} > "${WORKDIR}/custom_files/mt7981b-sl3000-emmc.dts"
+cp -fv "${SRC_DIR}/mt7981b-sl3000-emmc.dts" "${WORKDIR}/custom_files/"
 
-# 3. 【核心修复】强制劫持工具链并伪装状态
+# 3. 工具链劫持 (彻底根治 bison 报错)
 mkdir -p "${WORKDIR}/staging_dir/host/bin"
-mkdir -p "${WORKDIR}/staging_dir/host/stamp"
-
-# 物理删除并强制软链到宿主机 Ubuntu 系统工具
 for tool in m4 flex bison lex; do
     rm -f "${WORKDIR}/staging_dir/host/bin/$tool"
     ln -sf "/usr/bin/$tool" "${WORKDIR}/staging_dir/host/bin/$tool"
-    # 制造假的时间戳，骗过 Makefile 让它以为这些工具已经编译安装过了
-    touch "${WORKDIR}/staging_dir/host/stamp/.$tool_installed"
 done
-
 touch "${WORKDIR}/staging_dir/host/.tools_install_y"
 
-# 4. 同步 Feeds 并注入配置
+# 4. 配置初始化与 ID 强行对齐
 cd "${WORKDIR}"
 ./scripts/feeds update -a && ./scripts/feeds install -a
 cp -fv "${SRC_DIR}/sl3000_defconfig" .config
 
-# 强制注入分区大小限制
+# 【核心修复】确保勾选 sl3000-emmc 并锁定分区大小
+sed -i '/CONFIG_TARGET_mediatek_filogic_DEVICE/d' .config
+echo "CONFIG_TARGET_mediatek_filogic_DEVICE_sl3000-emmc=y" >> .config
 sed -i '/CONFIG_TARGET_KERNEL_PARTSIZE/d; /CONFIG_TARGET_ROOTFS_PARTSIZE/d' .config
 echo "CONFIG_TARGET_KERNEL_PARTSIZE=128" >> .config
 echo "CONFIG_TARGET_ROOTFS_PARTSIZE=1024" >> .config
 
 make defconfig
 
-echo "✅ [Final Audit] 工具链硬化完成。"
+echo "✅ [Audit] 脚本执行完毕，标识符已锁定为 sl3000-emmc。"
