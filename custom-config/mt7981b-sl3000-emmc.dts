@@ -7,7 +7,8 @@
 
 / {
 	model = "SL-3000 eMMC Router";
-	compatible = "sl,sl3000-emmc", "mediatek,mt7981b";
+	/* 修正 compatible 匹配上游驱动 */
+	compatible = "sl,sl3000-emmc", "mediatek,mt7981";
 
 	aliases {
 		serial0 = &uart0;
@@ -21,6 +22,7 @@
 		stdout-path = "serial0:115200n8";
 	};
 
+	/* ✅ 1GB RAM 映射正确 */
 	memory@40000000 {
 		device_type = "memory";
 		reg = <0x0 0x40000000 0x0 0x40000000>;
@@ -42,19 +44,16 @@
 
 	leds {
 		compatible = "gpio-leds";
-		led_red: led-red {
+		led_red: led-0 {
 			label = "red:status";
-			color = <LED_COLOR_ID_RED>;
 			gpios = <&pio 10 GPIO_ACTIVE_LOW>;
 		};
-		led_green: led-green {
+		led_green: led-1 {
 			label = "green:status";
-			color = <LED_COLOR_ID_GREEN>;
 			gpios = <&pio 11 GPIO_ACTIVE_LOW>;
 		};
-		led_blue: led-blue {
+		led_blue: led-2 {
 			label = "blue:status";
-			color = <LED_COLOR_ID_BLUE>;
 			gpios = <&pio 12 GPIO_ACTIVE_LOW>;
 		};
 	};
@@ -137,6 +136,9 @@
 
 &uart0 { status = "okay"; };
 &watchdog { status = "okay"; };
-&wifi { status = "okay"; };
+&wifi { 
+	/* 如果你有 factory 分区，建议以后在这里加入 nvmem 引用 */
+	status = "okay"; 
+};
 &usb_phy { status = "okay"; };
 &xhci { status = "okay"; };
