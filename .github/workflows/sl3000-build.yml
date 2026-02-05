@@ -1,89 +1,79 @@
-name: SL3000-Factory-Ultimate-V2
+name: SL3000-ProMax-Final-Fixed
 
 on:
   workflow_dispatch:
 
 env:
   WORKDIR: openwrt
-  SOURCE_REPO: https://github.com/immortalwrt/immortalwrt.git
-  SOURCE_BRANCH: openwrt-24.10
 
 jobs:
   build:
     runs-on: ubuntu-22.04
-    permissions:
-      contents: write
     steps:
-      - name: 1. 检出配置仓库
+      - name: 1. 检出配置
         uses: actions/checkout@v4
 
-      - name: 2. 暴力清空磁盘空间
+      - name: 2. 磁盘与 Swap 优化 (预防 1GB 镜像打包崩溃)
         run: |
           sudo docker image prune -a -f
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /var/lib/docker
           sudo apt-get clean
+          sudo fallocate -l 4G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
 
-      - name: 3. 构建环境准备
+      - name: 3. 构建环境与源码同步
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler bc dos2unix libncurses5-dev libssl-dev
+          git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git ${{ env.WORKDIR }}
 
-      - name: 4. 源码克隆与重构
+      - name: 4. 执行基因注入
         run: |
-          git clone --depth=1 -b ${{ env.SOURCE_BRANCH }} ${{ env.SOURCE_REPO }} ${{ env.WORKDIR }}
-          cd ${{ env.WORKDIR }}
-          chmod +x ../scripts/sl3000-patch.sh
-          ../scripts/sl3000-patch.sh
+          chmod +x scripts/sl3000-patch.sh
+          ./scripts/sl3000-patch.sh
 
-      - name: 5. 编译工具链 (核心自愈)
+      - name: 5. 编译基础工具链
         working-directory: ${{ env.WORKDIR }}
         run: |
+          # 强制将劫持工具链放在首位
           export PATH=${{ github.workspace }}/${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
           make tools/install -j$(nproc) || make tools/install -j1 V=s
           make toolchain/install -j$(nproc) || make toolchain/install -j1 V=s
 
-      - name: 6. [暴力彻底] 地毯式 DTS 覆盖与强制注册
+      - name: 6. 核心阶段：全路径 DTS 劫持
         working-directory: ${{ env.WORKDIR }}
         run: |
-          # 1. 强行解压内核
           make target/linux/prepare -j$(nproc)
           
-          # 2. 定位内核 DTS 根目录
-          K_SRC=$(find build_dir -path "*/arch/arm64/boot/dts" -type d | head -n 1)
-          echo "🎯 目标内核路径: $K_SRC"
-          
-          # 3. 双层空投：父目录和 mediatek 目录各塞一份
-          cp -fv target/linux/mediatek/dts/mt7981b-sl3000-emmc.dts "$K_SRC/"
-          mkdir -p "$K_SRC/mediatek"
-          cp -fv target/linux/mediatek/dts/mt7981b-sl3000-emmc.dts "$K_SRC/mediatek/"
-          
-          # 4. 遍历所有 Makefile 强行注册
-          find build_dir -name "Makefile" | xargs grep -l "dtb-$(CONFIG_ARCH_MEDIATEK)" | while read -r mk; do
-            sed -i '/mt7981b-sl3000-emmc.dtb/d' "$mk"
-            echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$mk"
-            echo "✅ 成功修改: $mk"
+          # 动态搜索所有 DTS 根目录并实施“断后”注入
+          find build_dir -path "*/arch/arm64/boot/dts" -type d | while read -r dts_root; do
+            echo "🎯 正在对齐路径: $dts_root"
+            cp -fv custom_files/mt7981b-sl3000-emmc.dts "$dts_root/"
+            mkdir -p "$dts_root/mediatek"
+            cp -fv custom_files/mt7981b-sl3000-emmc.dts "$dts_root/mediatek/"
+            
+            # 递归劫持 Makefile，增加防御性判断
+            find "$dts_root" -maxdepth 2 -name "Makefile" | while read -r mk; do
+              if ! grep -q "mt7981b-sl3000-emmc.dtb" "$mk"; then
+                sed -i '/dtb-$(CONFIG_ARCH_MEDIATEK)/a \dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' "$mk"
+                echo "✅ 已成功篡改: $mk"
+              fi
+            done
           done
 
       - name: 7. 全量编译与镜像合成
         working-directory: ${{ env.WORKDIR }}
         run: |
           export PATH=${{ github.workspace }}/${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
-          # 先攻克内核编译
+          # 优先攻克内核，确保存储架构被识别
           make target/linux/compile -j$(nproc) || make target/linux/compile -j1 V=s
-          # 再编译软件包
+          # 全量包与打包逻辑
           make package/compile -j$(nproc) || make package/compile -j1 V=s
-          # 最后安装与打包
           make target/install -j$(nproc) || make target/install -j1 V=s
 
-      - name: 8. 固件整理与 Release 发布
+      - name: 8. 发布工厂固件
         uses: softprops/action-gh-release@v2
         if: success()
         with:
-          tag_name: SL3000-Factory-${{ github.run_id }}
+          tag_name: SL3000-ProMax-${{ github.run_id }}
           files: ${{ env.WORKDIR }}/bin/targets/mediatek/filogic/*.bin
-          body: |
-            ### SL3000 旗舰版 2.0 (全链路自愈)
-            - **RAM/eMMC**: 1GB / 1GB
-            - **DTS 策略**: 双路径强制覆盖
-            - **状态**: 自动构建完成
           token: ${{ secrets.GITHUB_TOKEN }}
