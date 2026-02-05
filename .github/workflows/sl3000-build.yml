@@ -1,4 +1,4 @@
-name: SL3000-Ultimate-Pro-Max-Plus
+name: SL3000-Ultimate-Fixed
 
 on:
   workflow_dispatch:
@@ -13,12 +13,22 @@ jobs:
       - name: 1. 检出配置
         uses: actions/checkout@v4
 
-      - name: 2. 极致性能调优 (Swap & Cache)
+      - name: 2. 极致性能调优 (安全处理 Swap)
         run: |
-          sudo docker image prune -a -f
-          sudo rm -rf /usr/share/dotnet /opt/ghc /var/lib/docker
-          sudo apt-get clean
-          sudo fallocate -l 8G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
+          # 1. 空间清理
+          sudo docker image prune -a -f || true
+          sudo rm -rf /usr/share/dotnet /opt/ghc /var/lib/docker || true
+          
+          # 2. 安全创建 8G Swap (解决 Text file busy)
+          if [ -f /swapfile ]; then
+            sudo swapoff /swapfile || true
+            sudo rm -f /swapfile
+          fi
+          sudo fallocate -l 8G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          free -h
 
       - name: 3. 开启全量编译缓存
         uses: actions/cache@v4
@@ -39,29 +49,28 @@ jobs:
           chmod +x scripts/sl3000-patch.sh
           ./scripts/sl3000-patch.sh
 
-      - name: 6. [终极锁死] 内核补丁化注入
+      - name: 6. [终极锁死] DTS 路径全覆盖
         working-directory: ${{ env.WORKDIR }}
         run: |
           make target/linux/prepare -j$(nproc)
           
-          # 寻找内核 DTS 物理路径
+          # 锁定内核 DTS 目录
           K_DTS_DIR=$(find build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | head -n 1)
+          
+          # 双路注入
           cp -fv custom_files/mt7981b-sl3000-emmc.dts "$K_DTS_DIR/"
-          
-          # 暴力注册进内核 Makefile (核心：确保 dtbs 阶段必定编译此文件)
-          K_MAKEFILE="$K_DTS_DIR/Makefile"
-          sed -i '/mt7981b-sl3000-emmc.dtb/d' "$K_MAKEFILE"
-          echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$K_MAKEFILE"
-          
-          # 额外加固：在父目录也塞一份，彻底解决“路径错位”
           cp -fv custom_files/mt7981b-sl3000-emmc.dts "$(dirname "$K_DTS_DIR")/"
+          
+          # Makefile 暴力注册
+          sed -i '/mt7981b-sl3000-emmc.dtb/d' "$K_DTS_DIR/Makefile"
+          echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$K_DTS_DIR/Makefile"
 
       - name: 7. 极速全量编译
         working-directory: ${{ env.WORKDIR }}
         run: |
           export PATH="/usr/lib/ccache:${{ github.workspace }}/${{ env.WORKDIR }}/staging_dir/host/bin:$PATH"
           export CCACHE_DIR="${{ github.workspace }}/${{ env.WORKDIR }}/.ccache"
-          # 核心编译：先内核，后包，最后打包
+          # 核心流程
           make target/linux/compile -j$(nproc) || make target/linux/compile -j1 V=s
           make package/compile -j$(nproc) || make package/compile -j1 V=s
           make target/install -j$(nproc) || make target/install -j1 V=s
@@ -70,6 +79,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: success()
         with:
-          tag_name: SL3000-Evolution-${{ github.run_id }}
+          tag_name: SL3000-Factory-${{ github.run_id }}
           files: ${{ env.WORKDIR }}/bin/targets/mediatek/filogic/*.bin
           token: ${{ secrets.GITHUB_TOKEN }}
