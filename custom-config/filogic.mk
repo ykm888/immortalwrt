@@ -10,6 +10,7 @@ define Device/sl3000-emmc
   
   DEVICE_PACKAGES := \
 	kmod-mmc kmod-sdhci-mtk \
+	kmod-mt753x \
 	kmod-fs-f2fs f2fs-tools f2fsck \
 	kmod-usb3 kmod-usb-dwc3-mtk \
 	block-mount blkid lsblk parted
