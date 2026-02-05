@@ -5,7 +5,7 @@ define Device/sl3000-emmc
   DEVICE_DTS_DIR := $(DTS_DIR)/mediatek
   SUPPORTED_DEVICES := sl,sl3000-emmc mediatek,mt7981b
   
-  # 使用纯数字字节，防止 Shell 计算报错
+  # 修复单位报错：64M -> 67108864, 1024M -> 1073741824
   KERNEL_SIZE := 67108864
   IMAGE_SIZE := 1073741824
   
