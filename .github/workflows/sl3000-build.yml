@@ -1,4 +1,4 @@
-name: SL3000-V13-Smart-Build
+name: SL3000-V13.1-Cache-Build
 
 on:
   workflow_dispatch:
@@ -15,7 +15,7 @@ jobs:
       - name: 1. 检出仓库
         uses: actions/checkout@v4
 
-      - name: 2. [延续修复] 磁盘扩容与 Swap 彻底重置
+      - name: 2. 磁盘扩容与 Swap 重置
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /var/lib/docker || true
           sudo swapoff -a || true
@@ -25,11 +25,25 @@ jobs:
           sudo mkswap /swapfile
           sudo swapon /swapfile
 
-      - name: 3. 安装环境并克隆源码
+      - name: 3. 安装依赖并克隆源码
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler bc dos2unix libncurses5-dev libssl-dev
           git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git ${{ env.WORKDIR }}
+
+      # ======= 新增：缓存机制 =======
+      - name: 3.5 设置编译缓存
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.WORKDIR }}/dl
+            ${{ env.WORKDIR }}/staging_dir
+            ${{ env.WORKDIR }}/build_dir/host
+            ${{ env.WORKDIR }}/build_dir/toolchain-*
+          key: ${{ runner.os }}-openwrt-cache-${{ hashFiles('**/sl3000_defconfig') }}
+          restore-keys: |
+            ${{ runner.os }}-openwrt-cache-
+      # =============================
 
       - name: 4. 执行注入脚本
         run: |
@@ -39,37 +53,20 @@ jobs:
       - name: 5. 编译 Host 工具链
         working-directory: ${{ env.WORKDIR }}
         run: |
-          export PATH=/usr/bin:$PATH
+          # 仅在没有缓存命中时进行全量工具链编译
           make tools/install -j$(nproc)
           make toolchain/install -j$(nproc)
 
-      - name: 6. [V13 智能加固] 地毯式 DTS 探测与注入
+      - name: 6. [智能匹配] 注入 DTS 并修正内核引用
         working-directory: ${{ env.WORKDIR }}
         run: |
-          # 延续修复：解压内核
           make target/linux/prepare -j$(nproc)
-          
-          # 寻找所有可能的 Mediatek DTS 目录
           K_DTS_DIRS=$(find build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d)
-          
           for DTS_DIR in $K_DTS_DIRS; do
-            echo "🎯 正在处理目录: $DTS_DIR"
-            
-            # 【自动匹配逻辑】探测内核使用 mt7981 还是 mt7981b
-            if [ -f "$DTS_DIR/mt7981b.dtsi" ]; then
-                TARGET_DTSI="mt7981b.dtsi"
-            else
-                TARGET_DTSI="mt7981.dtsi"
-            fi
-            echo "🔍 检测到内核基准文件: $TARGET_DTSI"
-
-            # 动态改名并注入：替换 DTS 里的 include 行
+            if [ -f "$DTS_DIR/mt7981b.dtsi" ]; then TARGET_DTSI="mt7981b.dtsi"; else TARGET_DTSI="mt7981.dtsi"; fi
+            # 自动修复 DTS 内部的 include 行
             sed "s/mt7981.*\.dtsi/$TARGET_DTSI/g" "custom_files/mt7981b-sl3000-emmc.dts" > "$DTS_DIR/mt7981b-sl3000-emmc.dts"
-            
-            # 兼容性副本：复制一份不带 b 的，确保万无一失
             cp -f "$DTS_DIR/mt7981b-sl3000-emmc.dts" "$DTS_DIR/mt7981-sl3000-emmc.dts"
-
-            # 在 Makefile 中精准注册
             K_MAKEFILE="$DTS_DIR/Makefile"
             if [ -f "$K_MAKEFILE" ]; then
               sed -i '/sl3000-emmc.dtb/d' "$K_MAKEFILE"
@@ -78,13 +75,13 @@ jobs:
             fi
           done
 
-      - name: 7. [延续修复] 最终生产
+      - name: 7. 最终生产
         working-directory: ${{ env.WORKDIR }}
         run: |
           export BISON_PKGDATADIR=/usr/share/bison
           export M4=/usr/bin/m4
           export PATH=/usr/bin:${{ github.workspace }}/${{ env.WORKDIR }}/staging_dir/host/bin:$PATH
-          
+          # 针对 64M 报错修复后的重新编译
           make target/linux/compile -j$(nproc) V=s
           make target/install -j$(nproc) V=s
 
@@ -92,6 +89,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: success()
         with:
-          tag_name: SL3000-eMMC-Final-${{ github.run_id }}
+          tag_name: SL3000-eMMC-V13.1-${{ github.run_id }}
           files: ${{ env.WORKDIR }}/bin/targets/mediatek/filogic/*sl3000-emmc-sysupgrade.bin
           token: ${{ secrets.GITHUB_TOKEN }}
