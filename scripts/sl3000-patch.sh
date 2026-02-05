@@ -1,32 +1,41 @@
 #!/bin/bash
 set -e
 
-[ -z "$GITHUB_WORKSPACE" ] && GITHUB_WORKSPACE=$(cd ../; pwd)
-SRC_DIR="${GITHUB_WORKSPACE}/custom-config"
+# 确保定位到仓库根目录
+REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd)
+WORKDIR="${REPO_ROOT}/openwrt"
+SRC_DIR="${REPO_ROOT}/custom-config"
 
-echo "🔥 [Step 1] 基因清洗与预注入..."
+echo "💎 [SL3000 Audit] 正在执行全量基因锁定..."
 
-# 1. 镜像模具注入
-mkdir -p target/linux/mediatek/image
-cp -fv "$SRC_DIR/filogic.mk" target/linux/mediatek/image/filogic.mk
+# 1. 静态模具注入
+mkdir -p "${WORKDIR}/target/linux/mediatek/image"
+cp -fv "${SRC_DIR}/filogic.mk" "${WORKDIR}/target/linux/mediatek/image/filogic.mk"
 
-# 2. 彻底清洗 DTS (移除回车符，强制 Unix 格式)
-mkdir -p target/linux/mediatek/dts
-{
+# 2. DTS 预净化处理
+mkdir -p "${WORKDIR}/custom_files"
+{ 
     echo '/dts-v1/;'
-    grep -v "/dts-v1/;" "$SRC_DIR/mt7981b-sl3000-emmc.dts" | tr -d '\r'
-} > target/linux/mediatek/dts/mt7981b-sl3000-emmc.dts
+    grep -v "/dts-v1/;" "${SRC_DIR}/mt7981b-sl3000-emmc.dts" | tr -d '\r'
+} > "${WORKDIR}/custom_files/mt7981b-sl3000-emmc.dts"
 
-# 3. 劫持宿主机工具链
-mkdir -p staging_dir/host/bin
-for tool in m4 flex bison lex; do
-    ln -sf /usr/bin/$tool staging_dir/host/bin/$tool
+# 3. 宿主机环境硬化 - 建立最高优先级工具链
+mkdir -p "${WORKDIR}/staging_dir/host/bin"
+for tool in m4 flex bison lex sed awk rsync grep; do
+    ln -sf /usr/bin/$tool "${WORKDIR}/staging_dir/host/bin/$tool"
 done
-touch staging_dir/host/.tools_install_y
+touch "${WORKDIR}/staging_dir/host/.tools_install_y"
 
-# 4. 强制 Feeds 更新与配置注入
+# 4. 源码预处理
+cd "${WORKDIR}"
 ./scripts/feeds update -a && ./scripts/feeds install -a
-cp -fv "$SRC_DIR/sl3000_defconfig" .config
+
+# 5. 配置强制对齐 (防止内存定义被自动缩减)
+cp -fv "${SRC_DIR}/sl3000_defconfig" .config
+sed -i '/CONFIG_TARGET_KERNEL_PARTSIZE/d' .config
+sed -i '/CONFIG_TARGET_ROOTFS_PARTSIZE/d' .config
+echo "CONFIG_TARGET_KERNEL_PARTSIZE=128" >> .config
+echo "CONFIG_TARGET_ROOTFS_PARTSIZE=1024" >> .config
 make defconfig
 
-echo "✅ 基础注入完成。"
+echo "✅ [Audit] 脚本校验通过，环境已锁定。"
