@@ -10,7 +10,7 @@
 	model = "SL-3000 eMMC Router (128GB Custom Edition)";
 	compatible = "sl,sl3000-emmc", "mediatek,mt7981";
 
-	/* 延续修复：1GB RAM 寄存器定义 */
+	/* 延续修复：适配 1GB 运行内存 */
 	memory@40000000 {
 		device_type = "memory";
 		reg = <0 0x40000000 0 0x40000000>;
@@ -57,30 +57,17 @@
 		#address-cells = <1>;
 		#size-cells = <1>;
 
-		partition@0 {
-			label = "gpt";
-			reg = <0x0 0x100000>;
-			read-only;
-		};
+		partition@0 { label = "gpt"; reg = <0x0 0x100000>; read-only; };
+		partition@100000 { label = "u-boot-env"; reg = <0x100000 0x80000>; };
+		partition@180000 { label = "factory"; reg = <0x180000 0x200000>; read-only; };
 
-		partition@100000 {
-			label = "u-boot-env";
-			reg = <0x100000 0x80000>;
-		};
-
-		partition@180000 {
-			label = "factory";
-			reg = <0x180000 0x200000>;
-			read-only;
-		};
-
-		/* 🎯 延续修复核心：Kernel 分区必须从 0x380000 开始，大小 128MB */
+		/* 🎯 延续修复：内核分区物理对齐 (128MB) */
 		partition@380000 {
 			label = "kernel";
 			reg = <0x380000 0x8000000>; 
 		};
 
-		/* 🎯 延续修复核心：Rootfs 紧随其后，定义为 1GB */
+		/* 🎯 延续修复：Rootfs 分区 (1GB) */
 		partition@8380000 {
 			label = "rootfs";
 			reg = <0x8380000 0x40000000>;
@@ -89,7 +76,30 @@
 };
 
 &pio {
-	/* ... 此处保留你提供的 mmc0_pins 和 uart0_pins 代码 ... */
+	/* 🎯 重点修复：填补官方底包缺失的引脚定义 */
+	mmc0_pins_default: mmc0-pins-default {
+		mux { function = "flash"; groups = "emmc_51"; };
+		conf-cmd-dat {
+			pins = "EMMC_DATA0", "EMMC_DATA1", "EMMC_DATA2", "EMMC_DATA3",
+			       "EMMC_DATA4", "EMMC_DATA5", "EMMC_DATA6", "EMMC_DATA7", "EMMC_CMD";
+			input-enable; drive-strength = <MTK_DRIVE_4mA>; bias-pull-up = <MTK_PUPD_SET_R1R0_01>;
+		};
+		conf-clk { pins = "EMMC_CK"; drive-strength = <MTK_DRIVE_6mA>; bias-pull-down = <MTK_PUPD_SET_R1R0_10>; };
+		conf-rst { pins = "EMMC_RSTB"; drive-strength = <MTK_DRIVE_4mA>; bias-pull-up = <MTK_PUPD_SET_R1R0_01>; };
+	};
+
+	mmc0_pins_uhs: mmc0-pins-uhs {
+		mux { function = "flash"; groups = "emmc_51"; };
+		conf-cmd-dat {
+			pins = "EMMC_DATA0", "EMMC_DATA1", "EMMC_DATA2", "EMMC_DATA3",
+			       "EMMC_DATA4", "EMMC_DATA5", "EMMC_DATA6", "EMMC_DATA7", "EMMC_CMD";
+			input-enable; drive-strength = <MTK_DRIVE_4mA>; bias-pull-up = <MTK_PUPD_SET_R1R0_01>;
+		};
+	};
+
+	uart0_pins: uart0-pins {
+		mux { function = "uart"; groups = "uart0_0_tx_rx"; };
+	};
 };
 
 &uart0 { status = "okay"; };
