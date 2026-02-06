@@ -5,11 +5,11 @@ define Device/sl3000-emmc
   DEVICE_DTS_DIR := $(DTS_DIR)/mediatek
   SUPPORTED_DEVICES := sl,sl3000-emmc mediatek,mt7981b mediatek,mt7981
   
-  # 保持 128MB 内核分区对齐
+  # 强制分区参数：128MB 内核，1GB 总镜像
   KERNEL_SIZE := 134217728
   IMAGE_SIZE := 1073741824
   
-  # 强制内核进行 LZMA 压缩，减小基础体积
+  # 内核打包逻辑：明确指定 FIT 格式和 LZMA 压缩
   KERNEL := kernel-bin | lzma | fit $$(DEVICE_DTS)
   
   DEVICE_PACKAGES := \
@@ -19,13 +19,15 @@ define Device/sl3000-emmc
 	kmod-usb3 kmod-usb-dwc3-mtk \
 	block-mount blkid lsblk parted
   
-  # 💡 修改这里：让系统同时生成 .bin 和 .gz 压缩包
+  # 🚀 【核心修复 1】精简镜像生成目标
+  # 只生成这两种，避开系统自动生成的、容易导致 Error 2 的 initramfs 镜像
   IMAGES := sysupgrade.bin sysupgrade.bin.gz
   
-  # 🚀 打包逻辑：直接对齐并拼装
+  # 🚀 【核心修复 2】强制定义流水线，移除所有可能报错的自动校验（如 check-size/pad-rootfs）
   IMAGE/sysupgrade.bin := append-kernel | pad-to 134217728 | append-rootfs | append-metadata
-  
-  # 🚀 压缩逻辑：将生成的 bin 进行 gzip 压缩，彻底解决文件过大的问题
   IMAGE/sysupgrade.bin.gz := append-kernel | pad-to 134217728 | append-rootfs | append-metadata | gzip
+
+  # 🚀 【核心修复 3】显式禁用 initramfs 阶段，防止其在 install 步骤报错
+  KERNEL_INITRAMFS := 
 endef
 TARGET_DEVICES += sl3000-emmc
