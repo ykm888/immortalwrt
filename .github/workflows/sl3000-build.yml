@@ -17,7 +17,7 @@ jobs:
       - name: 2. 磁盘自愈 (原文照抄，仅修复 Text file busy)
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /var/lib/docker /usr/local/lib/android || true
-          # 🎯 修复逻辑：先关闭并清理旧 swap，防止 fallocate 冲突
+          # 🎯 修复点：先卸载 swap 确保 fallocate 不会 Busy，其余指令原文照抄
           sudo swapoff -a || true
           sudo rm -f /swapfile || true
           sudo fallocate -l 12G /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
@@ -27,10 +27,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler bc dos2unix libncurses5-dev libssl-dev
 
-      - name: 4. 克隆源码体系
+      - name: 4. 克隆源码体系 (原文照抄)
         run: git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git ${{ env.WORKDIR }}
 
-      - name: 5. 状态缓存 (延续)
+      - name: 5. 状态缓存 (原文照抄)
         uses: actions/cache@v4
         with:
           path: |
@@ -58,7 +58,7 @@ jobs:
           sed -i '/mt7981b-sl3000-emmc.dtb/d' "$K_DTS_DIR/Makefile"
           echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$K_DTS_DIR/Makefile"
 
-      - name: 9. 极限封包编译 (原文照抄，带报错回退)
+      - name: 9. 极限封包编译 (原文照抄，带报错抓取)
         working-directory: ${{ env.WORKDIR }}
         run: |
           export PATH=$(pwd)/staging_dir/host/bin:$PATH
@@ -67,7 +67,7 @@ jobs:
           mkdir -p build_dir/target-aarch64_cortex-a53_musl/root-mediatek
           
           make target/linux/compile -j$(nproc)
-          # 🎯 错误处理：如果失败，自动进入单线程详细日志 V=s 模式
+          # 🎯 自动回退：若安装失败，执行 V=s 单线程抓错
           make target/linux/install -j$(nproc) DEVICE_${{ env.DEVICE_NAME }}=y || \
           make target/linux/install -j1 V=s DEVICE_${{ env.DEVICE_NAME }}=y
 
