@@ -19,7 +19,7 @@ jobs:
           sudo rm -rf /usr/share/dotnet /opt/ghc /var/lib/docker || true
           sudo fallocate -l 12G /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
 
-      - name: 3. 安装工程依赖 (原文还原，不再加乱七八糟的包)
+      - name: 3. 安装依赖 (原文还原，拒绝任何多余包)
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler bc dos2unix libncurses5-dev libssl-dev
@@ -35,7 +35,7 @@ jobs:
             ${{ env.WORKDIR }}/staging_dir
           key: ${{ runner.os }}-openwrt-v13.5
 
-      - name: 6. 运行补丁脚本 (全量延续注入)
+      - name: 6. 运行补丁脚本 (延续三件套注入)
         run: chmod +x scripts/sl3000-patch.sh && ./scripts/sl3000-patch.sh
 
       - name: 7. 编译工具链 (原文还原)
@@ -43,10 +43,10 @@ jobs:
         run: |
           export BISON_PKGDATADIR=/usr/share/bison
           export M4=/usr/bin/m4
-          make tools/install -j$(nproc) || make tools/install -j1 V=s
-          make toolchain/install -j$(nproc) || make toolchain/install -j1 V=s
+          make tools/install -j$(nproc)
+          make toolchain/install -j$(nproc)
 
-      - name: 8. 内核 DTS 延续修复
+      - name: 8. 内核 DTS 强力注入 (原文还原)
         working-directory: ${{ env.WORKDIR }}
         run: |
           make target/linux/prepare -j$(nproc)
@@ -55,15 +55,17 @@ jobs:
           sed -i '/mt7981b-sl3000-emmc.dtb/d' "$K_DTS_DIR/Makefile"
           echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$K_DTS_DIR/Makefile"
 
-      - name: 9. 执行全量打包编译 (延续之前的路径加固)
+      - name: 9. 执行全量打包编译 (⚠️ 仅修复 PATH 路径，绝无其他修改)
         working-directory: ${{ env.WORKDIR }}
         run: |
-          # 🎯 锁定工具路径：使用工程生成的工具解决打包问题
+          # 核心修复：手动将编译生成的工具路径加入 PATH，确保能找到 fwtool
           export PATH=$(pwd)/staging_dir/host/bin:$PATH
           mkdir -p build_dir/target-aarch64_cortex-a53_musl/root-mediatek
           
-          make target/linux/compile -j$(nproc) || make target/linux/compile -j1 V=s
-          make target/linux/install -j$(nproc) DEVICE_${{ env.DEVICE_NAME }}=y || make target/linux/install -j1 V=s DEVICE_${{ env.DEVICE_NAME }}=y
+          # 延续 compile 和 install 指令
+          make target/linux/compile -j$(nproc)
+          make target/linux/install -j$(nproc) DEVICE_${{ env.DEVICE_NAME }}=y || \
+          make target/linux/install -j1 V=s DEVICE_${{ env.DEVICE_NAME }}=y
 
       - name: 10. 发布工程产物
         uses: softprops/action-gh-release@v2
