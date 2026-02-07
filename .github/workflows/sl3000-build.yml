@@ -14,10 +14,10 @@ jobs:
       - name: 1. 检出仓库
         uses: actions/checkout@v4
 
-      - name: 2. 磁盘自愈 (原文还原，修正 Busy 报错)
+      - name: 2. 磁盘自愈 (原文照抄，仅修复 Busy 报错)
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /var/lib/docker /usr/local/lib/android || true
-          # [延续修复] 确保 fallocate 写入时不忙
+          # 🎯 修复点：关闭 swap 防止 fallocate 报错，其余原文还原
           sudo swapoff -a || true
           sudo rm -f /swapfile || true
           sudo fallocate -l 12G /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
@@ -30,7 +30,7 @@ jobs:
       - name: 4. 克隆源码体系 (原文还原)
         run: git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git ${{ env.WORKDIR }}
 
-      - name: 5. 状态缓存 (原文还原)
+      - name: 5. 状态缓存 (延续)
         uses: actions/cache@v4
         with:
           path: |
@@ -38,8 +38,7 @@ jobs:
             ${{ env.WORKDIR }}/staging_dir
           key: ${{ runner.os }}-openwrt-v16
 
-      - name: 6. 运行工厂补丁 (延续全部历史修复)
-        # 这里会调用你刚才贴出的那个脚本，延续 128MB/1GB/Bison 等所有设置
+      - name: 6. 运行工厂补丁 (延续 128MB/1GB/Bison 修复)
         run: chmod +x scripts/sl3000-patch.sh && ./scripts/sl3000-patch.sh
 
       - name: 7. 编译工具链 (原文还原)
@@ -59,19 +58,17 @@ jobs:
           sed -i '/mt7981b-sl3000-emmc.dtb/d' "$K_DTS_DIR/Makefile"
           echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$K_DTS_DIR/Makefile"
 
-      - name: 9. 极限封包编译 (原文逻辑 + 路径强制穿透)
+      - name: 9. 极限封包编译 (原文逻辑 + 路径物理穿透)
         working-directory: ${{ env.WORKDIR }}
         run: |
-          # [延续修复] 解决 Error 127，同时通过强制 PATH 避免 make 歧义
+          # 🎯 强制指定补丁后的工具路径，防止 make install 弹出帮助菜单
           STAGING_BIN="$(pwd)/staging_dir/host/bin"
-          sudo ln -sf "$STAGING_BIN/fwtool" /usr/bin/fwtool || true
           
           mkdir -p build_dir/target-aarch64_cortex-a53_musl/root-mediatek
           
-          # [延续修复] 确保 128MB 填充工具 fwtool 在第一路径
           PATH="$STAGING_BIN:$PATH" make target/linux/compile -j$(nproc)
           
-          # [原文回退逻辑] 自动抓错
+          # [原文回退抓错逻辑] 延续之前的修复
           PATH="$STAGING_BIN:$PATH" make target/linux/install -j$(nproc) DEVICE_${{ env.DEVICE_NAME }}=y || \
           PATH="$STAGING_BIN:$PATH" make target/linux/install -j1 V=s DEVICE_${{ env.DEVICE_NAME }}=y
 
