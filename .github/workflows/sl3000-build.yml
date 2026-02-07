@@ -5,7 +5,6 @@ on:
 
 env:
   WORKDIR: openwrt
-  # 🎯 核心同步：强制指定设备名，确保路径与 MK 文件一致
   DEVICE_NAME: sl3000-emmc
 
 jobs:
@@ -20,43 +19,31 @@ jobs:
       - name: 2. 环境清理与磁盘扩容
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /var/lib/docker /usr/local/lib/android || true
-          # 释放磁盘空间
           sudo docker image prune -a -f
           sudo swapoff -a || true
           sudo rm -f /swapfile || true
-          sudo fallocate -l 12G /swapfile # 稍微加大 Swap 应对 1GB 镜像打包
+          sudo fallocate -l 12G /swapfile
           sudo chmod 600 /swapfile
           sudo mkswap /swapfile
           sudo swapon /swapfile
 
-      - name: 3. 安装依赖
+      - name: 3. 安装依赖工具
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler bc dos2unix libncurses5-dev libssl-dev qemu-utils
+          sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler bc dos2unix libncurses5-dev libssl-dev
 
-      - name: 4. 克隆源码与同步 Feeds
+      - name: 4. 克隆源码
         run: |
           git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git ${{ env.WORKDIR }}
-          cd ${{ env.WORKDIR }}
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
 
-      - name: 5. 注入三件套配置 (DTS/MK/CONFIG)
+      - name: 5. 运行补丁脚本 (全量修复注入)
         run: |
-          # 1. 注入并强制覆盖 DTS (内核源码层)
-          # 注意：此步在 prepare 后会再次执行以防被覆盖
-          mkdir -p ${{ env.WORKDIR }}/target/linux/mediatek/dts/
-          cp -fv custom-config/mt7981b-sl3000-emmc.dts ${{ env.WORKDIR }}/target/linux/mediatek/dts/
-          
-          # 2. 注入 MK (打包逻辑层)
-          cp -fv custom-config/filogic.mk ${{ env.WORKDIR }}/target/linux/mediatek/image/filogic.mk
-          
-          # 3. 注入 .config (全局变量层)
-          cp -fv custom-config/seed.config ${{ env.WORKDIR }}/.config
-          cd ${{ env.WORKDIR }}
-          make defconfig
+          # 确保脚本有执行权限
+          chmod +x scripts/sl3000-patch.sh
+          # 运行脚本：它会自动处理 sl3000.config 和 filogic.mk
+          ./scripts/sl3000-patch.sh
 
-      - name: 6. 编译工具链 (增加环境稳固)
+      - name: 6. 编译工具链 (劫持路径延续版)
         working-directory: ${{ env.WORKDIR }}
         run: |
           export BISON_PKGDATADIR=/usr/share/bison
@@ -64,35 +51,35 @@ jobs:
           make tools/install -j$(nproc) || make tools/install -j1 V=s
           make toolchain/install -j$(nproc) || make toolchain/install -j1 V=s
 
-      - name: 7. 内核准备与 DTS 强力绑定
+      - name: 7. 内核准备与 DTS 动态注入
         working-directory: ${{ env.WORKDIR }}
         run: |
           make target/linux/prepare -j$(nproc)
           
-          # 🎯 彻底修复：无论内核版本如何变化，强制定位并注入 DTS
+          # 定位内核源码中的 DTS 目录并强制覆盖
           K_DTS_DIR=$(find build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | head -n 1)
           if [ -n "$K_DTS_DIR" ]; then
-            cp -fv target/linux/mediatek/dts/mt7981b-sl3000-emmc.dts "$K_DTS_DIR/"
-            # 兼容性同步：某些版本可能寻找不带 'b' 的文件名
+            echo "🎯 发现内核 DTS 路径: $K_DTS_DIR"
+            cp -fv ../custom-config/mt7981b-sl3000-emmc.dts "$K_DTS_DIR/"
+            # 兼容性同步
             cp -fv "$K_DTS_DIR/mt7981b-sl3000-emmc.dts" "$K_DTS_DIR/mt7981-sl3000-emmc.dts"
-            
-            # 强制修改内核 Makefile 确保编译 dtb
+            # 注册到内核 Makefile
             sed -i '/mt7981b-sl3000-emmc.dtb/d' "$K_DTS_DIR/Makefile"
             echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$K_DTS_DIR/Makefile"
           fi
 
-      - name: 8. 执行最终编译 (彻底解决路径缺失)
+      - name: 8. 执行编译与打包 (一次性解决路径)
         working-directory: ${{ env.WORKDIR }}
         run: |
-          # 🎯 核心修复：手动建立 root-mediatek 目录，防止 Error 1
+          # 🎯 核心修复：强制建立 root-mediatek 防止 Error 1
           mkdir -p build_dir/target-aarch64_cortex-a53_musl/root-mediatek
           
           # 编译内核
           make target/linux/compile -j$(nproc) V=s
-          # 执行打包 (针对特定设备)
+          # 执行安装 (指定生成的设备 Profile)
           make target/linux/install -j$(nproc) DEVICE_${{ env.DEVICE_NAME }}=y V=s
 
-      - name: 9. 整理并发布固件
+      - name: 9. 发布固件
         uses: softprops/action-gh-release@v2
         if: success()
         with:
