@@ -5,45 +5,37 @@ REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd)
 WORKDIR="${REPO_ROOT}/openwrt"
 SRC_DIR="${REPO_ROOT}/custom-config"
 
-echo "💎 [SL3000] 启动全量延续修复脚本 (严禁漂移版)..."
+echo "💎 [SL3000] 执行全量延续修复 (资产死守版)..."
 
 cd "${WORKDIR}"
 
-# [延续修复] 1. Feeds 自愈机制：三次重试确保源码包完整
-echo "🔄 正在同步 Feeds 源..."
+# [延续设置] 1. Feeds 同步
 for i in {1..3}; do
-    ./scripts/feeds update -a && ./scripts/feeds install -a && break || {
-        echo "⚠️ Feeds 更新失败，正在重试 ($i/3)..."
-        sleep 5
-    }
+    ./scripts/feeds update -a && ./scripts/feeds install -a && break || sleep 5
 done
 
-# [延续修复] 2. 环境清理与架构强锁定：防止配置污染导致编出 x86 固件
+# [延续设置] 2. 身份锁定 (确保 target 路径正确)
 rm -rf tmp .config .config.old
 echo "CONFIG_TARGET_mediatek=y" > .config
 echo "CONFIG_TARGET_mediatek_filogic=y" >> .config
 echo "CONFIG_TARGET_mediatek_filogic_DEVICE_sl3000-emmc=y" >> .config
 
-# [延续修复] 3. 配置文件合并：精准载入 sl3000.config
-if [ -f "${SRC_DIR}/sl3000.config" ]; then
-    cat "${SRC_DIR}/sl3000.config" >> .config
-else
-    echo "❌ 关键错误：丢失 custom-config/sl3000.config" && exit 1
-fi
-
-# [延续修复] 4. 打包文件注入：确保 pad-to 128MB 的 filogic.mk 生效
+# [延续设置] 3. 三件套资产注入 (锁定 pad-to 128MB)
+cat "${SRC_DIR}/sl3000.config" >> .config
 mkdir -p "target/linux/mediatek/image"
 cp -fv "${SRC_DIR}/filogic.mk" "target/linux/mediatek/image/filogic.mk"
+mkdir -p "target/linux/mediatek/dts"
+cp -fv "${SRC_DIR}/mt7981b-sl3000-emmc.dts" "target/linux/mediatek/dts/"
 
-# [延续修复] 5. 工具链劫持：解决 Actions 环境下 bison/m4 的路径冲突
+# [延续设置] 4. 工具链劫持 (原文照抄之前解决 bison 的设置)
 mkdir -p "staging_dir/host/bin"
 for tool in m4 flex bison gawk; do
     ln -sf "$(which $tool)" "staging_dir/host/bin/$tool"
 done
 touch "staging_dir/host/.tools_install_y"
 
-# [延续修复] 6. 空间防御逻辑：将 RootFS 强制纠偏为 512MB
+# [延续设置] 5. 空间防御 (锁死 512M RootFS)
 make defconfig
 sed -i 's/CONFIG_TARGET_ROOTFS_PARTSIZE=.*/CONFIG_TARGET_ROOTFS_PARTSIZE=512/' .config
 
-echo "✅ [SL3000] 补丁注入完成，所有之前修复的工程参数已锁定。"
+echo "✅ [SL3000] 资产已全量归位，设置已完全延续。"
