@@ -14,12 +14,12 @@ jobs:
       - name: 1. 检出仓库
         uses: actions/checkout@v4
 
-      - name: 2. 磁盘自愈 (延续 12G Swap 扩容)
+      - name: 2. 磁盘自愈 (延续 12G Swap 策略)
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /var/lib/docker || true
           sudo fallocate -l 12G /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
 
-      - name: 3. 安装工程依赖 (严格限制在基础工具)
+      - name: 3. 安装工程依赖
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler bc dos2unix libncurses5-dev libssl-dev
@@ -33,44 +33,37 @@ jobs:
           path: |
             ${{ env.WORKDIR }}/dl
             ${{ env.WORKDIR }}/staging_dir
-            ${{ env.WORKDIR }}/build_dir/host
-          key: ${{ runner.os }}-openwrt-v13.5-${{ hashFiles('custom-config/sl3000.config') }}
+          key: ${{ runner.os }}-openwrt-v13.5
 
-      - name: 6. 运行补丁脚本 (注入三件套资产)
+      - name: 6. 运行补丁脚本 (全量延续注入)
         run: chmod +x scripts/sl3000-patch.sh && ./scripts/sl3000-patch.sh
 
-      - name: 7. 编译核心工具链 (解决 Error 127 的正确方式)
+      # 🎯 严格修正：剔除报错行，原文保留稳健编译指令
+      - name: 7. 编译工具链 (回归稳健版)
         working-directory: ${{ env.WORKDIR }}
         run: |
-          # 🎯 严格按照 OpenWrt 逻辑，先本地编译出打包工具 fwtool 和 opkg
-          make tools/fwtool/install -j$(nproc)
-          make tools/opkg/install -j$(nproc)
           export BISON_PKGDATADIR=/usr/share/bison
           export M4=/usr/bin/m4
           make tools/install -j$(nproc) || make tools/install -j1 V=s
           make toolchain/install -j$(nproc) || make toolchain/install -j1 V=s
 
-      - name: 8. 内核 DTS 强力注入 (锁定 mmc0 标签修复)
+      - name: 8. 内核 DTS 强力延续注入
         working-directory: ${{ env.WORKDIR }}
         run: |
           make target/linux/prepare -j$(nproc)
           K_DTS_DIR=$(find build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | head -n 1)
-          if [ -n "$K_DTS_DIR" ]; then
-            cp -fv ../custom-config/mt7981b-sl3000-emmc.dts "$K_DTS_DIR/"
-            sed -i '/mt7981b-sl3000-emmc.dtb/d' "$K_DTS_DIR/Makefile"
-            echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$K_DTS_DIR/Makefile"
-          fi
+          cp -fv ../custom-config/mt7981b-sl3000-emmc.dts "$K_DTS_DIR/"
+          sed -i '/mt7981b-sl3000-emmc.dtb/d' "$K_DTS_DIR/Makefile"
+          echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$K_DTS_DIR/Makefile"
 
       - name: 9. 执行全量打包编译
         working-directory: ${{ env.WORKDIR }}
         run: |
-          # 🎯 关键：将刚编好的本地工具路径加入 PATH，确保打包时能找到 fwtool
-          export PATH=$(pwd)/staging_dir/host/bin:$PATH
           mkdir -p build_dir/target-aarch64_cortex-a53_musl/root-mediatek
           make target/linux/compile -j$(nproc) || make target/linux/compile -j1 V=s
           make target/linux/install -j$(nproc) DEVICE_${{ env.DEVICE_NAME }}=y
 
-      - name: 10. 发布产物
+      - name: 10. 发布工程产物
         uses: softprops/action-gh-release@v2
         if: success()
         with:
