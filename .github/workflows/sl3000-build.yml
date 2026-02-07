@@ -14,23 +14,23 @@ jobs:
       - name: 1. 检出仓库
         uses: actions/checkout@v4
 
-      - name: 2. 磁盘自愈 (原文照抄，仅修复 Text file busy)
+      - name: 2. 磁盘自愈 (原文还原，修正 Busy 报错)
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /var/lib/docker /usr/local/lib/android || true
-          # 🎯 修复点：先卸载 swap 确保 fallocate 不会 Busy，其余指令原文照抄
+          # [延续修复] 确保 fallocate 写入时不忙
           sudo swapoff -a || true
           sudo rm -f /swapfile || true
           sudo fallocate -l 12G /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
 
-      - name: 3. 安装依赖 (原文照抄)
+      - name: 3. 安装依赖 (原文还原)
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler bc dos2unix libncurses5-dev libssl-dev
 
-      - name: 4. 克隆源码体系 (原文照抄)
+      - name: 4. 克隆源码体系 (原文还原)
         run: git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git ${{ env.WORKDIR }}
 
-      - name: 5. 状态缓存 (原文照抄)
+      - name: 5. 状态缓存 (原文还原)
         uses: actions/cache@v4
         with:
           path: |
@@ -39,9 +39,10 @@ jobs:
           key: ${{ runner.os }}-openwrt-v16
 
       - name: 6. 运行工厂补丁 (延续全部历史修复)
+        # 这里会调用你刚才贴出的那个脚本，延续 128MB/1GB/Bison 等所有设置
         run: chmod +x scripts/sl3000-patch.sh && ./scripts/sl3000-patch.sh
 
-      - name: 7. 编译工具链 (原文照抄)
+      - name: 7. 编译工具链 (原文还原)
         working-directory: ${{ env.WORKDIR }}
         run: |
           export BISON_PKGDATADIR=/usr/share/bison
@@ -58,18 +59,21 @@ jobs:
           sed -i '/mt7981b-sl3000-emmc.dtb/d' "$K_DTS_DIR/Makefile"
           echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$K_DTS_DIR/Makefile"
 
-      - name: 9. 极限封包编译 (原文照抄，带报错抓取)
+      - name: 9. 极限封包编译 (原文逻辑 + 路径强制穿透)
         working-directory: ${{ env.WORKDIR }}
         run: |
-          export PATH=$(pwd)/staging_dir/host/bin:$PATH
-          sudo ln -sf $(pwd)/staging_dir/host/bin/fwtool /usr/bin/fwtool || true
+          # [延续修复] 解决 Error 127，同时通过强制 PATH 避免 make 歧义
+          STAGING_BIN="$(pwd)/staging_dir/host/bin"
+          sudo ln -sf "$STAGING_BIN/fwtool" /usr/bin/fwtool || true
           
           mkdir -p build_dir/target-aarch64_cortex-a53_musl/root-mediatek
           
-          make target/linux/compile -j$(nproc)
-          # 🎯 自动回退：若安装失败，执行 V=s 单线程抓错
-          make target/linux/install -j$(nproc) DEVICE_${{ env.DEVICE_NAME }}=y || \
-          make target/linux/install -j1 V=s DEVICE_${{ env.DEVICE_NAME }}=y
+          # [延续修复] 确保 128MB 填充工具 fwtool 在第一路径
+          PATH="$STAGING_BIN:$PATH" make target/linux/compile -j$(nproc)
+          
+          # [原文回退逻辑] 自动抓错
+          PATH="$STAGING_BIN:$PATH" make target/linux/install -j$(nproc) DEVICE_${{ env.DEVICE_NAME }}=y || \
+          PATH="$STAGING_BIN:$PATH" make target/linux/install -j1 V=s DEVICE_${{ env.DEVICE_NAME }}=y
 
       - name: 10. 发布产物
         uses: softprops/action-gh-release@v2
