@@ -1,4 +1,4 @@
-name: SL3000-Final-Diagnostic
+name: SL3000-Final-System
 
 on:
   workflow_dispatch:
@@ -14,9 +14,12 @@ jobs:
       - name: 1. 检出仓库
         uses: actions/checkout@v4
 
-      - name: 2. 磁盘自愈 (12G Swap)
+      - name: 2. 磁盘自愈 (原文照抄，仅修复 Text file busy)
         run: |
-          sudo rm -rf /usr/share/dotnet /opt/ghc /var/lib/docker || true
+          sudo rm -rf /usr/share/dotnet /opt/ghc /var/lib/docker /usr/local/lib/android || true
+          # 🎯 修复逻辑：先关闭并清理旧 swap，防止 fallocate 冲突
+          sudo swapoff -a || true
+          sudo rm -f /swapfile || true
           sudo fallocate -l 12G /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
 
       - name: 3. 安装依赖 (原文照抄)
@@ -27,7 +30,7 @@ jobs:
       - name: 4. 克隆源码体系
         run: git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git ${{ env.WORKDIR }}
 
-      - name: 5. 开启状态缓存
+      - name: 5. 状态缓存 (延续)
         uses: actions/cache@v4
         with:
           path: |
@@ -35,10 +38,10 @@ jobs:
             ${{ env.WORKDIR }}/staging_dir
           key: ${{ runner.os }}-openwrt-v16
 
-      - name: 6. 运行稳固补丁 (全量延续修复)
+      - name: 6. 运行工厂补丁 (延续全部历史修复)
         run: chmod +x scripts/sl3000-patch.sh && ./scripts/sl3000-patch.sh
 
-      - name: 7. 编译工具链 (原文照抄，锁定工具)
+      - name: 7. 编译工具链 (原文照抄)
         working-directory: ${{ env.WORKDIR }}
         run: |
           export BISON_PKGDATADIR=/usr/share/bison
@@ -55,7 +58,7 @@ jobs:
           sed -i '/mt7981b-sl3000-emmc.dtb/d' "$K_DTS_DIR/Makefile"
           echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$K_DTS_DIR/Makefile"
 
-      - name: 9. 极限封包编译 (原文照抄，增加自动抓错)
+      - name: 9. 极限封包编译 (原文照抄，带报错回退)
         working-directory: ${{ env.WORKDIR }}
         run: |
           export PATH=$(pwd)/staging_dir/host/bin:$PATH
@@ -64,7 +67,7 @@ jobs:
           mkdir -p build_dir/target-aarch64_cortex-a53_musl/root-mediatek
           
           make target/linux/compile -j$(nproc)
-          # [🎯 错误修复] 如果 install 失败，自动进入单线程详细日志模式
+          # 🎯 错误处理：如果失败，自动进入单线程详细日志 V=s 模式
           make target/linux/install -j$(nproc) DEVICE_${{ env.DEVICE_NAME }}=y || \
           make target/linux/install -j1 V=s DEVICE_${{ env.DEVICE_NAME }}=y
 
