@@ -5,7 +5,7 @@ REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd)
 WORKDIR="${REPO_ROOT}/openwrt"
 SRC_DIR="${REPO_ROOT}/custom-config"
 
-echo "💎 [SL3000] 执行全量延续修复 (修正版)..."
+echo "💎 [SL3000] 执行全量延续修复 (原文锁定版)..."
 
 cd "${WORKDIR}"
 
@@ -18,20 +18,19 @@ echo "CONFIG_TARGET_mediatek=y" > .config
 echo "CONFIG_TARGET_mediatek_filogic=y" >> .config
 echo "CONFIG_TARGET_mediatek_filogic_DEVICE_sl3000-emmc=y" >> .config
 
-# [延续原文] 3. 三件套资产注入 (128MB对齐/1GB内存/512M分区)
+# [延续原文] 3. 三件套资产注入 (确保 128MB对齐/1GB内存修复不丢失)
 cat "${SRC_DIR}/sl3000.config" >> .config
 mkdir -p "target/linux/mediatek/image"
 cp -fv "${SRC_DIR}/filogic.mk" "target/linux/mediatek/image/filogic.mk"
 mkdir -p "target/linux/mediatek/dts"
 cp -fv "${SRC_DIR}/mt7981b-sl3000-emmc.dts" "target/linux/mediatek/dts/"
 
-# [🎯 错误修复] 4. 工具链物理加固
-# 不再用 sed 修改 Makefile 源码（防止引起语法错），改为直接劫持系统路径
+# [🎯 唯一修复] 4. 工具链物理加固 (解决 Error 127)
 mkdir -p "staging_dir/host/bin"
 sudo ln -sf "$(pwd)/staging_dir/host/bin/fwtool" /usr/bin/fwtool || true
 sudo ln -sf "$(pwd)/staging_dir/host/bin/opkg" /usr/bin/opkg || true
 
-# [延续原文] 5. 环境补丁
+# [延续原文] 5. 环境补丁 (延续 bison/m4 修复)
 for tool in m4 flex bison gawk; do
     ln -sf "$(which $tool)" "staging_dir/host/bin/$tool" || true
 done
