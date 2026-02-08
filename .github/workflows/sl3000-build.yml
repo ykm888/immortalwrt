@@ -14,22 +14,22 @@ jobs:
       - name: 1. 检出仓库
         uses: actions/checkout@v4
 
-      - name: 2. 磁盘自愈
+      - name: 2. 磁盘自愈 (原文还原)
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /var/lib/docker /usr/local/lib/android || true
           sudo swapoff -a || true
           sudo rm -f /swapfile || true
           sudo fallocate -l 12G /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
 
-      - name: 3. 安装依赖
+      - name: 3. 安装依赖 (原文照抄)
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler bc dos2unix libncurses5-dev libssl-dev
 
-      - name: 4. 克隆源码体系
+      - name: 4. 克隆源码体系 (原文照抄)
         run: git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git ${{ env.WORKDIR }}
 
-      - name: 5. 状态缓存 (v18 锁定)
+      - name: 5. 状态缓存 (延续 v18，确保保存工具链)
         uses: actions/cache@v4
         with:
           path: |
@@ -40,41 +40,45 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-openwrt-sl3000-
 
-      - name: 6. 运行工厂补丁 (🎯 优化 1：前置目录检查)
-        run: |
-          if [ -d scripts ]; then
-            chmod +x scripts/sl3000-patch.sh
-            ./scripts/sl3000-patch.sh
-          else
-            echo "❌ 脚本目录不存在，请检查仓库结构！"
-            exit 1
-          fi
+      - name: 6. 运行工厂补丁 (延续全部修复项)
+        run: chmod +x scripts/sl3000-patch.sh && ./scripts/sl3000-patch.sh
 
-      - name: 7. 编译工具链 (原文还原)
+      - name: 7. 编译工具链 (原文还原，严禁乱改)
         working-directory: ${{ env.WORKDIR }}
         run: |
           export BISON_PKGDATADIR=/usr/share/bison
           make tools/install -j$(nproc)
           make toolchain/install -j$(nproc)
 
-      - name: 8. 内核准备 (DTS 唯一化逻辑)
-        working-directory: ${{ env.WORKDIR }}
-        run: make target/linux/prepare -j$(nproc)
-
-      - name: 9. 极限封包编译 (🎯 优化 2：物理软链 + defconfig 强效兜底)
+      - name: 8. 内核/DTS 注入 (🎯 修复点：物理锁定 DTS 到 build 目录)
         working-directory: ${{ env.WORKDIR }}
         run: |
-          # 建立全局软链接，封杀 Error 127
+          make target/linux/prepare -j$(nproc)
+          K_DTS_DIR=$(find build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | head -n 1)
+          # 第一次锁定：将 DTS 注入到内核源码树中
+          if [ -n "$K_DTS_DIR" ]; then
+            cp -fv ../custom-config/mt7981b-sl3000-emmc.dts "$K_DTS_DIR/"
+            sed -i '/mt7981b-sl3000-emmc.dtb/d' "$K_DTS_DIR/Makefile"
+            echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$K_DTS_DIR/Makefile"
+          fi
+
+      - name: 9. 极限封包编译 (🎯 最终修复：软链接 + DTS 再次确认)
+        working-directory: ${{ env.WORKDIR }}
+        run: |
+          # 1. 建立全局软链接 (彻底解决 fwtool Error 127)
           HOST_BIN="$(pwd)/staging_dir/host/bin"
           sudo ln -sf "$HOST_BIN/fwtool" /usr/bin/fwtool || true
           sudo ln -sf "$HOST_BIN/opkg" /usr/bin/opkg || true
           sudo ln -sf "$HOST_BIN/mkhash" /usr/bin/mkhash || true
           
-          # 强效兜底：确保打包前配置完整且路径透传
-          export PATH="$HOST_BIN:$PATH"
-          make defconfig
+          # 2. 第二次锁定：防止 prepare 后的清理动作导致 DTS 丢失
+          K_DTS_DIR=$(find build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | head -n 1)
+          [ -n "$K_DTS_DIR" ] && cp -fv ../custom-config/mt7981b-sl3000-emmc.dts "$K_DTS_DIR/"
           
           mkdir -p build_dir/target-aarch64_cortex-a53_musl/root-mediatek
+          export PATH="$HOST_BIN:$PATH"
+          
+          # 3. 封包指令 (原文延续)
           make target/linux/compile -j$(nproc)
           make target/linux/install -j$(nproc) DEVICE_${{ env.DEVICE_NAME }}=y || \
           make target/linux/install -j1 V=s DEVICE_${{ env.DEVICE_NAME }}=y
