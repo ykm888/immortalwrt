@@ -14,23 +14,22 @@ jobs:
       - name: 1. 检出仓库
         uses: actions/checkout@v4
 
-      - name: 2. 磁盘自愈 (原文还原，仅修正 Busy 报错)
+      - name: 2. 磁盘自愈 (原文还原，仅加一行解决 Busy)
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /var/lib/docker /usr/local/lib/android || true
-          # 🎯 物理修复：仅加这一行解决 fallocate 冲突，其余像素级还原原文
           sudo swapoff -a || true
           sudo rm -f /swapfile || true
           sudo fallocate -l 12G /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
 
-      - name: 3. 安装依赖 (原文还原)
+      - name: 3. 安装依赖 (原文照抄)
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler bc dos2unix libncurses5-dev libssl-dev
 
-      - name: 4. 克隆源码体系 (原文还原)
+      - name: 4. 克隆源码体系 (原文照抄)
         run: git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git ${{ env.WORKDIR }}
 
-      - name: 5. 状态缓存 (原文还原)
+      - name: 5. 状态缓存 (原文照抄)
         uses: actions/cache@v4
         with:
           path: |
@@ -38,18 +37,17 @@ jobs:
             ${{ env.WORKDIR }}/staging_dir
           key: ${{ runner.os }}-openwrt-v16
 
-      - name: 6. 运行工厂补丁 (延续全部历史修复)
-        # 执行你确认过的那版脚本，锁死 128MB/1GB/Bison 资产
+      - name: 6. 运行工厂补丁 (延续128MB/1GB资产)
         run: chmod +x scripts/sl3000-patch.sh && ./scripts/sl3000-patch.sh
 
-      - name: 7. 编译工具链 (🎯 彻底还原原文：已剔除导致报错的所有垃圾代码)
+      - name: 7. 编译工具链 (🎯 彻底还原原文：已删掉导致报错的所有乱改内容)
         working-directory: ${{ env.WORKDIR }}
         run: |
           export BISON_PKGDATADIR=/usr/share/bison
           make tools/install -j$(nproc)
           make toolchain/install -j$(nproc)
 
-      - name: 8. 内核/DTS 延续注入 (1GB 内存锁定)
+      - name: 8. 内核/DTS 注入 (原文照抄)
         working-directory: ${{ env.WORKDIR }}
         run: |
           make target/linux/prepare -j$(nproc)
@@ -58,19 +56,17 @@ jobs:
           sed -i '/mt7981b-sl3000-emmc.dtb/d' "$K_DTS_DIR/Makefile"
           echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$K_DTS_DIR/Makefile"
 
-      - name: 9. 极限封包编译 (原文逻辑 + 路径强制穿透)
+      - name: 9. 极限封包编译 (🎯 唯一修复：解决找不到工具的报错)
         working-directory: ${{ env.WORKDIR }}
         run: |
-          # 延续之前解决 Error 127 的路径修复
+          # 获取生成的工具路径，并物理建立软链接解决 Error 127
           STAGING_BIN="$(pwd)/staging_dir/host/bin"
           sudo ln -sf "$STAGING_BIN/fwtool" /usr/bin/fwtool || true
           
           mkdir -p build_dir/target-aarch64_cortex-a53_musl/root-mediatek
           
-          # 强制路径指向，确保 128MB 填充工具生效
+          # 通过 PATH 穿透，确保 Makefile 100% 能找到你脚本里修好的 128MB 对齐工具
           PATH="$STAGING_BIN:$PATH" make target/linux/compile -j$(nproc)
-          
-          # 原文回退抓错逻辑
           PATH="$STAGING_BIN:$PATH" make target/linux/install -j$(nproc) DEVICE_${{ env.DEVICE_NAME }}=y || \
           PATH="$STAGING_BIN:$PATH" make target/linux/install -j1 V=s DEVICE_${{ env.DEVICE_NAME }}=y
 
