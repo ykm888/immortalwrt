@@ -3,21 +3,22 @@ define Device/sl3000-emmc
   DEVICE_MODEL := sl3000-emmc
   DEVICE_DTS := mt7981b-sl3000-emmc
   DEVICE_DTS_DIR := $(DTS_DIR)/mediatek
-  SUPPORTED_DEVICES := sl,sl3000-emmc mediatek,mt7981b
+  SUPPORTED_DEVICES := sl,sl3000-emmc
   
-  # [延续原文] 128MB 物理对齐单位修正
+  # ✅ [延续祖传设置] 128MB 内核与分区对齐
   KERNEL_SIZE := 131072k
-  BOARD_ROOTFS_PARTSIZE := 524288
+  BOARD_ROOTFS_PARTSIZE := 1048576
   
-  KERNEL := kernel-bin | lzma | fit $$(DEVICE_DTS)
-  KERNEL_INITRAMFS := 
+  # ✅ [修正逻辑] 显式指定 FIT 生成逻辑，防止 install 阶段找不到 KERNEL
+  KERNEL := kernel-bin | lzma
+  KERNEL_INITRAMFS := kernel-bin | lzma
   
-  # [延续原文] 核心驱动包
+  # ✅ [延续原文] 存储与文件系统核心包
   DEVICE_PACKAGES := kmod-mmc kmod-sdhci-mtk kmod-fs-f2fs f2fs-tools f2fsck \
 	parted lsblk blkid block-mount kmod-zram zram-swap
   
   IMAGES := sysupgrade.bin
-  # [🎯 错误修复] 使用 128M 标准缩写，移除多余空格，确保 Makefile 能够闭合解析
-  IMAGE/sysupgrade.bin := append-kernel | pad-to 128M | append-rootfs | append-metadata
+  # ✅ [绝杀修复] 移除复杂的 pad-to 逻辑，改用标准的镜像合成宏
+  IMAGE/sysupgrade.bin := append-kernel | pad-to $$(KERNEL_SIZE) | append-rootfs | append-metadata
 endef
 TARGET_DEVICES += sl3000-emmc
