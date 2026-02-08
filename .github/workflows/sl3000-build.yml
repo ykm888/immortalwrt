@@ -21,7 +21,7 @@ jobs:
           sudo rm -f /swapfile || true
           sudo fallocate -l 12G /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
 
-      - name: "3. 安装必备依赖"
+      - name: "3. 安装依赖环境"
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler bc libncurses5-dev libssl-dev
@@ -38,7 +38,7 @@ jobs:
             ${{ env.WORKDIR }}/build_dir/host
           key: ${{ runner.os }}-sl3000-v3-${{ github.run_id }}
           restore-keys: |
-            ${{ runner.os }}-sl3000-v3-
+            ${{ runner.os }}-sl3000-v2-
 
       - name: "6. 运行全量补丁脚本"
         run: chmod +x scripts/sl3000-patch.sh && ./scripts/sl3000-patch.sh
@@ -49,39 +49,44 @@ jobs:
           make tools/install -j$(nproc)
           make toolchain/install -j$(nproc)
 
-      - name: "8. 延续设置：DTS 物理注入"
+      - name: "8. 延续设置：DTS 物理注入 (路径修复)"
         working-directory: ${{ env.WORKDIR }}
         run: |
           make target/linux/prepare -j$(nproc)
+          # 使用 workspace 绝对路径，解决 cp: cannot stat 报错
+          DTS_SRC="${{ github.workspace }}/custom-config/mt7981b-sl3000-emmc.dts"
           find build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | while read -r dts_path; do
-            cp -fv ../custom-config/mt7981b-sl3000-emmc.dts "$dts_path/"
+            cp -fv "$DTS_SRC" "$dts_path/"
           done
 
       - name: "9. 强力编译 (含 Error 127 容错)"
         working-directory: ${{ env.WORKDIR }}
         run: |
           make target/linux/compile -j$(nproc)
-          # 即使清单生成报错也强制通过，由下一步打捞固件
           make target/linux/install -j$(nproc) DEVICE_${{ env.DEVICE_NAME }}=y || make target/linux/install -j1 V=s DEVICE_${{ env.DEVICE_NAME }}=y || true
 
-      - name: "10. 延续设置：固件压缩与精准打捞"
+      - name: "10. 延续设置：深度打捞与压缩 (容错修复)"
         working-directory: ${{ env.WORKDIR }}
         if: always()
         run: |
           mkdir -p ../release_bins
-          echo "🔍 正在执行过滤与压缩..."
-          # 仅处理大于 10MB 的固件，并执行最高等级 Gzip 压缩
-          find bin/targets/ -type f -size +10M -name "*sysupgrade.bin" | while read -r img; do
-            echo "📦 正在压缩: $img"
+          echo "🔍 启动深度打捞..."
+          # 定义多个可能的固件生成路径，防止目录不存在报错
+          SEARCH_PATHS="bin/targets/ build_dir/target-aarch64_*/linux-mediatek_filogic/"
+          
+          # 仅打捞大于 10MB 的有效固件并压缩
+          find $SEARCH_PATHS -type f -size +10M -name "*sysupgrade.bin" 2>/dev/null | while read -r img; do
+            echo "📦 发现并压缩固件: $img"
             gzip -9 -c "$img" > "../release_bins/$(basename "$img").gz"
           done
-          # 仅提取大小非零的清单文件
-          find bin/targets/ -type f -size +1c -name "*.manifest" -exec cp -v {} ../release_bins/ \;
           
-          # 检查结果，防止发布空文件夹
+          # 打捞非空清单文件
+          find $SEARCH_PATHS -type f -size +1c -name "*.manifest" 2>/dev/null -exec cp -v {} ../release_bins/ \;
+          
+          # 检查提取结果
           ls -lh ../release_bins/
 
-      - name: "11. 发布最终固件 (排除空文件)"
+      - name: "11. 发布固件"
         uses: softprops/action-gh-release@v2
         if: always()
         with:
