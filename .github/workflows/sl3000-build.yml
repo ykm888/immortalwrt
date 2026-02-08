@@ -14,7 +14,7 @@ jobs:
       - name: 1. 检出仓库
         uses: actions/checkout@v4
 
-      - name: 2. 磁盘自愈 (原文还原，物理解决 Busy 报错)
+      - name: 2. 磁盘自愈 (原文还原，仅加一行解决 Busy 报错)
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /var/lib/docker /usr/local/lib/android || true
           sudo swapoff -a || true
@@ -29,18 +29,21 @@ jobs:
       - name: 4. 克隆源码体系 (原文照抄)
         run: git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git ${{ env.WORKDIR }}
 
-      - name: 5. 状态缓存 (原文照抄)
+      - name: 5. 状态缓存 (🎯 补全逻辑：确保 dl/staging/host 全部缓存)
         uses: actions/cache@v4
         with:
           path: |
             ${{ env.WORKDIR }}/dl
             ${{ env.WORKDIR }}/staging_dir
-          key: ${{ runner.os }}-openwrt-v16
+            ${{ env.WORKDIR }}/build_dir/host
+          key: ${{ runner.os }}-openwrt-sl3000-v16
+          restore-keys: |
+            ${{ runner.os }}-openwrt-sl3000-
 
       - name: 6. 运行工厂补丁 (延续全部历史修复)
         run: chmod +x scripts/sl3000-patch.sh && ./scripts/sl3000-patch.sh
 
-      - name: 7. 编译工具链 (原文还原，无乱改)
+      - name: 7. 编译工具链 (🎯 严格还原原文：已剔除所有乱改指令)
         working-directory: ${{ env.WORKDIR }}
         run: |
           export BISON_PKGDATADIR=/usr/share/bison
@@ -56,22 +59,22 @@ jobs:
           sed -i '/mt7981b-sl3000-emmc.dtb/d' "$K_DTS_DIR/Makefile"
           echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$K_DTS_DIR/Makefile"
 
-      - name: 9. 极限封包编译 (🎯 唯一修复：通过全局软链彻底解决 Error 127)
+      - name: 9. 极限封包编译 (🎯 唯一修复：解决找不到工具的 Error 127)
         working-directory: ${{ env.WORKDIR }}
         run: |
-          # 建立系统级软链接，让 Makefile 躲不开
           HOST_BIN="$(pwd)/staging_dir/host/bin"
+          # 物理级修复：建立系统链接，确保 Makefile 子进程能找到工具
           sudo ln -sf "$HOST_BIN/fwtool" /usr/bin/fwtool || true
           sudo ln -sf "$HOST_BIN/opkg" /usr/bin/opkg || true
           sudo ln -sf "$HOST_BIN/mkhash" /usr/bin/mkhash || true
           
           mkdir -p build_dir/target-aarch64_cortex-a53_musl/root-mediatek
           
-          # 强制路径变量穿透
+          # 强制路径穿透
           export PATH="$HOST_BIN:$PATH"
           make target/linux/compile -j$(nproc)
           
-          # 捕获最后打包，严格延续原文回退逻辑
+          # 原文逻辑照抄
           make target/linux/install -j$(nproc) DEVICE_${{ env.DEVICE_NAME }}=y || \
           make target/linux/install -j1 V=s DEVICE_${{ env.DEVICE_NAME }}=y
 
