@@ -1,4 +1,4 @@
-name: SL3000-Full-Continuity
+name: SL3000-Final-Extreme-Cache
 
 on:
   workflow_dispatch:
@@ -11,10 +11,10 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      - name: 1. 检出仓库
+      - name: 1. 检出代码
         uses: actions/checkout@v4
 
-      - name: 2. ✅ 延续：极致磁盘清理与虚拟内存扩展
+      - name: 2. 极致磁盘清理与虚拟内存
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /var/lib/docker /usr/local/lib/android || true
           sudo swapoff -a || true
@@ -29,17 +29,18 @@ jobs:
       - name: 4. 克隆源码 (v24.10)
         run: git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git ${{ env.WORKDIR }}
 
-      - name: 5. ✅ 延续：恢复历史编译缓存
-        uses: actions/cache@v4
+      - name: 5. 🎯 恢复缓存 (分体式)
+        uses: actions/cache/restore@v4
         with:
           path: |
             ${{ env.WORKDIR }}/dl
             ${{ env.WORKDIR }}/staging_dir
-          key: ${{ runner.os }}-openwrt-sl3000-v20
+            ${{ env.WORKDIR }}/build_dir/host
+          key: ${{ runner.os }}-sl3000-extreme-${{ github.run_id }}
           restore-keys: |
-            ${{ runner.os }}-openwrt-sl3000-
+            ${{ runner.os }}-sl3000-extreme-
 
-      - name: 6. 运行全量补丁脚本
+      - name: 6. 运行全量补丁脚本 (延续祖传配置)
         run: chmod +x scripts/sl3000-patch.sh && ./scripts/sl3000-patch.sh
 
       - name: 7. 构建工具链
@@ -48,29 +49,43 @@ jobs:
           make tools/install -j$(nproc)
           make toolchain/install -j$(nproc)
 
-      - name: 8. ✅ 延续：内核 prepare 后再次锁定 DTS
+      - name: 8. 🎯 物理注入 DTS (锁定 1GB 定义)
         working-directory: ${{ env.WORKDIR }}
         run: |
           make target/linux/prepare -j$(nproc)
           find build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | while read -r dts_path; do
+            echo "💉 注入 DTS 到 $dts_path"
             cp -fv ../custom-config/mt7981b-sl3000-emmc.dts "$dts_path/"
           done
 
-      - name: 9. 🚀 编译与强力产物提取
+      - name: 9. 🚀 强力编译
         working-directory: ${{ env.WORKDIR }}
         run: |
           make target/linux/compile -j$(nproc)
-          # 哪怕 manifest 生成报错也继续，确保拿回 bin 文件
+          # 即使清单生成报错也强制继续
           make target/linux/install -j$(nproc) DEVICE_${{ env.DEVICE_NAME }}=y || true
-          
-          mkdir -p ../release_bins
-          find bin/targets/mediatek/filogic/ -name "*.bin" -exec cp -v {} ../release_bins/ \;
-          find bin/targets/mediatek/filogic/ -name "*.manifest" -exec cp -v {} ../release_bins/ \; || true
 
-      - name: 10. 发布最终固件
+      - name: 10. 📦 物理提取产物
+        working-directory: ${{ env.WORKDIR }}
+        run: |
+          mkdir -p ../artifact_bins
+          find bin/targets/mediatek/filogic/ -name "*.bin" -exec cp -v {} ../artifact_bins/ \;
+          find bin/targets/mediatek/filogic/ -name "*.manifest" -exec cp -v {} ../artifact_bins/ \; || true
+
+      - name: 11. 发布固件
         uses: softprops/action-gh-release@v2
         if: always()
         with:
           tag_name: SL3000-Final-v2.0-${{ github.run_id }}
-          files: release_bins/*
+          files: artifact_bins/*
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 12. 🎯 强制保存缓存 (无论成败)
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: |
+            ${{ env.WORKDIR }}/dl
+            ${{ env.WORKDIR }}/staging_dir
+            ${{ env.WORKDIR }}/build_dir/host
+          key: ${{ runner.os }}-sl3000-extreme-${{ github.run_id }}
