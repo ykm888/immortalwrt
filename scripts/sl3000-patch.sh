@@ -18,19 +18,19 @@ echo "CONFIG_TARGET_mediatek=y" > .config
 echo "CONFIG_TARGET_mediatek_filogic=y" >> .config
 echo "CONFIG_TARGET_mediatek_filogic_DEVICE_sl3000-emmc=y" >> .config
 
-# 3. 核心资产注入 (128MB对齐/1GB内存/DTS)
+# 3. 核心资产注入 (128MB对齐/1GB内存/DTS 物理注入)
 cat "${SRC_DIR}/sl3000.config" >> .config
 mkdir -p "target/linux/mediatek/image"
 cp -fv "${SRC_DIR}/filogic.mk" "target/linux/mediatek/image/filogic.mk"
 mkdir -p "target/linux/mediatek/dts"
 cp -fv "${SRC_DIR}/mt7981b-sl3000-emmc.dts" "target/linux/mediatek/dts/"
 
-# 4. 环境延续修复 (Bison/M4 补丁)
+# 4. 环境延续修复 (Bison/M4 补丁，确保编译工具链不报错)
 for tool in m4 flex bison gawk; do
     ln -sf "$(which $tool)" "staging_dir/host/bin/$tool" || true
 done
 
-# 5. 分区锁定
+# 5. 分区溢出修复延续
 make defconfig
 sed -i 's/CONFIG_TARGET_ROOTFS_PARTSIZE=.*/CONFIG_TARGET_ROOTFS_PARTSIZE=512/' .config
 
