@@ -21,52 +21,60 @@ jobs:
           sudo rm -f /swapfile || true
           sudo fallocate -l 12G /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
 
-      - name: 3. 安装依赖 (原文照抄)
+      - name: 3. 安装依赖
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler bc dos2unix libncurses5-dev libssl-dev
 
-      - name: 4. 克隆源码体系 (原文照抄)
+      - name: 4. 克隆源码体系
         run: git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git ${{ env.WORKDIR }}
 
-      - name: 5. 状态缓存 (锁定 v17 版本)
+      - name: 5. 状态缓存 (v18 锁定)
         uses: actions/cache@v4
         with:
           path: |
             ${{ env.WORKDIR }}/dl
             ${{ env.WORKDIR }}/staging_dir
             ${{ env.WORKDIR }}/build_dir/host
-          key: ${{ runner.os }}-openwrt-sl3000-v17
+          key: ${{ runner.os }}-openwrt-sl3000-v18
           restore-keys: |
             ${{ runner.os }}-openwrt-sl3000-
 
-      - name: 6. 运行工厂补丁 (资产注入与前置检查)
-        run: chmod +x scripts/sl3000-patch.sh && ./scripts/sl3000-patch.sh
+      - name: 6. 运行工厂补丁 (🎯 优化 1：前置目录检查)
+        run: |
+          if [ -d scripts ]; then
+            chmod +x scripts/sl3000-patch.sh
+            ./scripts/sl3000-patch.sh
+          else
+            echo "❌ 脚本目录不存在，请检查仓库结构！"
+            exit 1
+          fi
 
-      - name: 7. 编译工具链 (🎯 严格还原原文：严禁乱加参数)
+      - name: 7. 编译工具链 (原文还原)
         working-directory: ${{ env.WORKDIR }}
         run: |
           export BISON_PKGDATADIR=/usr/share/bison
           make tools/install -j$(nproc)
           make toolchain/install -j$(nproc)
 
-      - name: 8. 内核就绪 (🎯 修复：不再重复拷贝 DTS，仅做 prepare)
+      - name: 8. 内核准备 (DTS 唯一化逻辑)
         working-directory: ${{ env.WORKDIR }}
         run: make target/linux/prepare -j$(nproc)
 
-      - name: 9. 极限封包编译 (🎯 唯一修复：此时工具已生成，执行物理级软链)
+      - name: 9. 极限封包编译 (🎯 优化 2：物理软链 + defconfig 强效兜底)
         working-directory: ${{ env.WORKDIR }}
         run: |
-          # 🎯 此时 staging_dir/host/bin 已经真实存在，做软链才有效
+          # 建立全局软链接，封杀 Error 127
           HOST_BIN="$(pwd)/staging_dir/host/bin"
           sudo ln -sf "$HOST_BIN/fwtool" /usr/bin/fwtool || true
           sudo ln -sf "$HOST_BIN/opkg" /usr/bin/opkg || true
           sudo ln -sf "$HOST_BIN/mkhash" /usr/bin/mkhash || true
           
-          mkdir -p build_dir/target-aarch64_cortex-a53_musl/root-mediatek
+          # 强效兜底：确保打包前配置完整且路径透传
           export PATH="$HOST_BIN:$PATH"
+          make defconfig
           
-          # 执行编译与安装
+          mkdir -p build_dir/target-aarch64_cortex-a53_musl/root-mediatek
           make target/linux/compile -j$(nproc)
           make target/linux/install -j$(nproc) DEVICE_${{ env.DEVICE_NAME }}=y || \
           make target/linux/install -j1 V=s DEVICE_${{ env.DEVICE_NAME }}=y
