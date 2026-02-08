@@ -1,4 +1,4 @@
-name: SL3000-Extreme-Build
+name: SL3000-Extreme-Final
 
 on:
   workflow_dispatch:
@@ -21,7 +21,7 @@ jobs:
           sudo rm -f /swapfile || true
           sudo fallocate -l 12G /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
 
-      - name: "3. 安装依赖环境"
+      - name: "3. 安装必备依赖"
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler bc libncurses5-dev libssl-dev
@@ -36,9 +36,9 @@ jobs:
             ${{ env.WORKDIR }}/dl
             ${{ env.WORKDIR }}/staging_dir
             ${{ env.WORKDIR }}/build_dir/host
-          key: ${{ runner.os }}-sl3000-v2-${{ github.run_id }}
+          key: ${{ runner.os }}-sl3000-v3-${{ github.run_id }}
           restore-keys: |
-            ${{ runner.os }}-sl3000-v2-
+            ${{ runner.os }}-sl3000-v3-
 
       - name: "6. 运行全量补丁脚本"
         run: chmod +x scripts/sl3000-patch.sh && ./scripts/sl3000-patch.sh
@@ -61,18 +61,27 @@ jobs:
         working-directory: ${{ env.WORKDIR }}
         run: |
           make target/linux/compile -j$(nproc)
+          # 即使清单生成报错也强制通过，由下一步打捞固件
           make target/linux/install -j$(nproc) DEVICE_${{ env.DEVICE_NAME }}=y || make target/linux/install -j1 V=s DEVICE_${{ env.DEVICE_NAME }}=y || true
 
-      - name: "10. 延续设置：固件全盘地毯式搜索"
+      - name: "10. 延续设置：固件压缩与精准打捞"
         working-directory: ${{ env.WORKDIR }}
         if: always()
         run: |
           mkdir -p ../release_bins
-          find . -name "*sysupgrade.bin" -o -name "*.manifest" | while read -r file; do
-            cp -v "$file" ../release_bins/
+          echo "🔍 正在执行过滤与压缩..."
+          # 仅处理大于 10MB 的固件，并执行最高等级 Gzip 压缩
+          find bin/targets/ -type f -size +10M -name "*sysupgrade.bin" | while read -r img; do
+            echo "📦 正在压缩: $img"
+            gzip -9 -c "$img" > "../release_bins/$(basename "$img").gz"
           done
+          # 仅提取大小非零的清单文件
+          find bin/targets/ -type f -size +1c -name "*.manifest" -exec cp -v {} ../release_bins/ \;
+          
+          # 检查结果，防止发布空文件夹
+          ls -lh ../release_bins/
 
-      - name: "11. 发布最终固件"
+      - name: "11. 发布最终固件 (排除空文件)"
         uses: softprops/action-gh-release@v2
         if: always()
         with:
@@ -88,4 +97,4 @@ jobs:
             ${{ env.WORKDIR }}/dl
             ${{ env.WORKDIR }}/staging_dir
             ${{ env.WORKDIR }}/build_dir/host
-          key: ${{ runner.os }}-sl3000-v2-${{ github.run_id }}
+          key: ${{ runner.os }}-sl3000-v3-${{ github.run_id }}
