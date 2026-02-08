@@ -1,4 +1,4 @@
-name: SL3000-Full-Continuity-Extreme
+name: SL3000-Extreme-Build
 
 on:
   workflow_dispatch:
@@ -14,14 +14,14 @@ jobs:
       - name: 1. 检出代码
         uses: actions/checkout@v4
 
-      - name: 2. ✅ 延续：12G Swap 与磁盘清理 [cite: 2026-02-07]
+      - name: 2. ✅ 延续：磁盘清理与 12G Swap [cite: 2026-02-07]
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /var/lib/docker /usr/local/lib/android || true
           sudo swapoff -a || true
           sudo rm -f /swapfile || true
           sudo fallocate -l 12G /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
 
-      - name: 3. 安装核心依赖
+      - name: 3. 安装依赖环境
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler bc libncurses5-dev libssl-dev
@@ -29,7 +29,7 @@ jobs:
       - name: 4. 克隆源码 (v24.10)
         run: git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git ${{ env.WORKDIR }}
 
-      - name: 5. 🎯 延续：分体式恢复缓存 (无论成败) [cite: 2026-02-07]
+      - name: 5. 🎯 延续：分体式缓存恢复 [cite: 2026-02-07]
         uses: actions/cache/restore@v4
         with:
           path: |
@@ -37,7 +37,8 @@ jobs:
             ${{ env.WORKDIR }}/staging_dir
             ${{ env.WORKDIR }}/build_dir/host
           key: ${{ runner.os }}-sl3000-v2-${{ github.run_id }}
-          restore-keys: ${{ runner.os }}-sl3000-v2-
+          restore-keys: |
+            ${{ runner.os }}-sl3000-v2-
 
       - name: 6. 运行全量补丁脚本
         run: chmod +x scripts/sl3000-patch.sh && ./scripts/sl3000-patch.sh
@@ -48,7 +49,7 @@ jobs:
           make tools/install -j$(nproc)
           make toolchain/install -j$(nproc)
 
-      - name: 8. 🎯 延续：内核 prepare 后物理覆盖 DTS [cite: 2026-02-07]
+      - name: 8. 🎯 延续：DTS 物理注入 [cite: 2026-02-07]
         working-directory: ${{ env.WORKDIR }}
         run: |
           make target/linux/prepare -j$(nproc)
@@ -56,14 +57,13 @@ jobs:
             cp -fv ../custom-config/mt7981b-sl3000-emmc.dts "$dts_path/"
           done
 
-      - name: 9. 🚀 强力编译 (带 Error 127 容错) [cite: 2026-02-07]
+      - name: 9. 🚀 强力编译 (含 Error 127 容错) [cite: 2026-02-07]
         working-directory: ${{ env.WORKDIR }}
         run: |
           make target/linux/compile -j$(nproc)
-          # 即使 install 报错也继续，依靠打捞逻辑提取 bin [cite: 2026-02-07]
           make target/linux/install -j$(nproc) DEVICE_${{ env.DEVICE_NAME }}=y || make target/linux/install -j1 V=s DEVICE_${{ env.DEVICE_NAME }}=y || true
 
-      - name: 10. 📦 ✅ 延续：全盘地毯式固件打捞 [cite: 2026-02-07]
+      - name: 10. 📦 ✅ 延续：固件全盘地毯式搜索 [cite: 2026-02-07]
         working-directory: ${{ env.WORKDIR }}
         if: always()
         run: |
@@ -71,17 +71,16 @@ jobs:
           find . -name "*sysupgrade.bin" -o -name "*.manifest" | while read -r file; do
             cp -v "$file" ../release_bins/
           done
-          ls -lh ../release_bins/
 
       - name: 11. 发布最终固件
         uses: softprops/action-gh-release@v2
         if: always()
         with:
-          tag_name: SL3000-Extreme-v3.0-${{ github.run_id }}
+          tag_name: SL3000-Final-v3.0-${{ github.run_id }}
           files: release_bins/*
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 12. 🎯 强制保存缓存 (延续工具链成果) [cite: 2026-02-07]
+      - name: 12. 🎯 延续：强制保存缓存 (无论成败) [cite: 2026-02-07]
         uses: actions/cache/save@v4
         if: always()
         with:
