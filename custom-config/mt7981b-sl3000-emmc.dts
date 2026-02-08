@@ -4,17 +4,16 @@
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/input/input.h>
 #include <dt-bindings/leds/common.h>
-#include <dt-bindings/pinctrl/mt7981-pinfunc.h>
 #include "mt7981.dtsi"
 
 / {
     #address-cells = <2>;
     #size-cells = <2>;
 
-    model = "SL-3000 eMMC Router (128GB Custom Edition)";
+    model = "SL-3000 eMMC Router (128MB/1GB Custom Edition)";
     compatible = "sl,sl3000-emmc", "mediatek,mt7981";
 
-    /* 🎯 适配 1GB 运行内存 */
+    /* ✅ 延续：1GB 内存物理窗口映射 */
     memory@40000000 {
         device_type = "memory";
         reg = <0 0x40000000 0 0x40000000>;
@@ -29,8 +28,8 @@
         compatible = "gpio-keys";
         reset {
             label = "reset";
-            gpios = <&pio 1 GPIO_ACTIVE_LOW>;
-            linux,code = <KEY_RESTART>;
+            gpios = <&pio 1 1>; 
+            linux,code = <158>; 
         };
     };
 
@@ -38,7 +37,7 @@
         compatible = "gpio-leds";
         status_blue {
             label = "blue:status";
-            gpios = <&pio 8 GPIO_ACTIVE_HIGH>;
+            gpios = <&pio 8 0>; 
         };
     };
 };
@@ -56,6 +55,7 @@
     vmmc-supply = <&reg_3p3v>;
     status = "okay";
 
+    /* ✅ 延续：此前确定的 128MB/1GB 物理分区表 */
     partitions {
         compatible = "fixed-partitions";
         #address-cells = <1>;
@@ -65,13 +65,13 @@
         partition@100000 { label = "u-boot-env"; reg = <0x100000 0x80000>; };
         partition@180000 { label = "factory"; reg = <0x180000 0x200000>; read-only; };
 
-        /* 🎯 内核 128MB */
+        /* 核心：128MB Kernel */
         partition@380000 {
             label = "kernel";
             reg = <0x380000 0x8000000>;
         };
 
-        /* 🎯 根文件系统 1GB */
+        /* 核心：1GB Rootfs */
         partition@8380000 {
             label = "rootfs";
             reg = <0x8380000 0x40000000>;
@@ -85,10 +85,20 @@
         conf-cmd-dat {
             pins = "EMMC_DATA0", "EMMC_DATA1", "EMMC_DATA2", "EMMC_DATA3",
                    "EMMC_DATA4", "EMMC_DATA5", "EMMC_DATA6", "EMMC_DATA7", "EMMC_CMD";
-            input-enable; drive-strength = <MTK_DRIVE_4mA>; bias-pull-up = <MTK_PUPD_SET_R1R0_01>;
+            input-enable;
+            drive-strength = <4>; /* ✅ 延续：4mA 稳定性驱动 */
+            bias-pull-up = <1>;  
         };
-        conf-clk { pins = "EMMC_CK"; drive-strength = <MTK_DRIVE_6mA>; bias-pull-down = <MTK_PUPD_SET_R1R0_10>; };
-        conf-rst { pins = "EMMC_RSTB"; drive-strength = <MTK_DRIVE_4mA>; bias-pull-up = <MTK_PUPD_SET_R1R0_01>; };
+        conf-clk {
+            pins = "EMMC_CK";
+            drive-strength = <6>; 
+            bias-pull-down = <2>; 
+        };
+        conf-rst {
+            pins = "EMMC_RSTB";
+            drive-strength = <4>;
+            bias-pull-up = <1>;
+        };
     };
 
     mmc0_pins_uhs: mmc0-pins-uhs {
@@ -96,7 +106,9 @@
         conf-cmd-dat {
             pins = "EMMC_DATA0", "EMMC_DATA1", "EMMC_DATA2", "EMMC_DATA3",
                    "EMMC_DATA4", "EMMC_DATA5", "EMMC_DATA6", "EMMC_DATA7", "EMMC_CMD";
-            input-enable; drive-strength = <MTK_DRIVE_4mA>; bias-pull-up = <MTK_PUPD_SET_R1R0_01>;
+            input-enable;
+            drive-strength = <4>;
+            bias-pull-up = <1>;
         };
     };
 
@@ -110,8 +122,6 @@
     pinctrl-0 = <&uart0_pins>;
     status = "okay";
 };
-
-&watchdog { status = "okay"; };
 
 &eth {
     status = "okay";
