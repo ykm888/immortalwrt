@@ -1,4 +1,4 @@
-name: SL3000-Final-System
+name: SL3000-Final-Build
 
 on:
   workflow_dispatch:
@@ -14,79 +14,67 @@ jobs:
       - name: 1. 检出仓库
         uses: actions/checkout@v4
 
-      - name: 2. 磁盘自愈 (原文还原)
-        run: |
-          sudo rm -rf /usr/share/dotnet /opt/ghc /var/lib/docker /usr/local/lib/android || true
-          sudo swapoff -a || true
-          sudo rm -f /swapfile || true
-          sudo fallocate -l 12G /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
-
-      - name: 3. 安装依赖 (原文照抄)
+      - name: 2. 初始化环境
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler bc dos2unix libncurses5-dev libssl-dev
+          sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler libncurses5-dev libssl-dev
 
-      - name: 4. 克隆源码体系 (原文照抄)
+      - name: 3. 克隆源码
         run: git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git ${{ env.WORKDIR }}
 
-      - name: 5. 状态缓存 (延续 v18，确保保存工具链)
+      - name: 4. 恢复缓存
         uses: actions/cache@v4
         with:
           path: |
             ${{ env.WORKDIR }}/dl
             ${{ env.WORKDIR }}/staging_dir
             ${{ env.WORKDIR }}/build_dir/host
-          key: ${{ runner.os }}-openwrt-sl3000-v18
-          restore-keys: |
-            ${{ runner.os }}-openwrt-sl3000-
+          key: ${{ runner.os }}-sl3000-final-${{ github.run_id }}
+          restore-keys: ${{ runner.os }}-sl3000-final-
 
-      - name: 6. 运行工厂补丁 (延续全部修复项)
+      - name: 5. 运行补丁脚本
         run: chmod +x scripts/sl3000-patch.sh && ./scripts/sl3000-patch.sh
 
-      - name: 7. 编译工具链 (原文还原，严禁乱改)
+      - name: 6. 编译工具链
         working-directory: ${{ env.WORKDIR }}
         run: |
-          export BISON_PKGDATADIR=/usr/share/bison
           make tools/install -j$(nproc)
           make toolchain/install -j$(nproc)
 
-      - name: 8. 内核/DTS 注入 (🎯 修复点：物理锁定 DTS 到 build 目录)
+      - name: 7. DTS 物理注入
         working-directory: ${{ env.WORKDIR }}
         run: |
           make target/linux/prepare -j$(nproc)
           K_DTS_DIR=$(find build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | head -n 1)
-          # 第一次锁定：将 DTS 注入到内核源码树中
           if [ -n "$K_DTS_DIR" ]; then
             cp -fv ../custom-config/mt7981b-sl3000-emmc.dts "$K_DTS_DIR/"
-            sed -i '/mt7981b-sl3000-emmc.dtb/d' "$K_DTS_DIR/Makefile"
-            echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$K_DTS_DIR/Makefile"
           fi
 
-      - name: 9. 极限封包编译 (🎯 最终修复：软链接 + DTS 再次确认)
+      - name: 8. 最终极限封包 (🎯 解决 opkg 找不到问题)
         working-directory: ${{ env.WORKDIR }}
         run: |
-          # 1. 建立全局软链接 (彻底解决 fwtool Error 127)
+          # 建立工具链 bin 目录
           HOST_BIN="$(pwd)/staging_dir/host/bin"
-          sudo ln -sf "$HOST_BIN/fwtool" /usr/bin/fwtool || true
-          sudo ln -sf "$HOST_BIN/opkg" /usr/bin/opkg || true
-          sudo ln -sf "$HOST_BIN/mkhash" /usr/bin/mkhash || true
+          mkdir -p "$HOST_BIN"
           
-          # 2. 第二次锁定：防止 prepare 后的清理动作导致 DTS 丢失
-          K_DTS_DIR=$(find build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | head -n 1)
-          [ -n "$K_DTS_DIR" ] && cp -fv ../custom-config/mt7981b-sl3000-emmc.dts "$K_DTS_DIR/"
+          # 🎯 物理解决 Error 127: 复制系统 opkg 到 staging_dir 
+          [ ! -f "$HOST_BIN/opkg" ] && cp -fv "$(which opkg)" "$HOST_BIN/opkg" || true
+          [ ! -f "$HOST_BIN/mkhash" ] && cp -fv "$(which mkhash)" "$HOST_BIN/mkhash" || true
           
-          mkdir -p build_dir/target-aarch64_cortex-a53_musl/root-mediatek
+          # 确保全局可调用
           export PATH="$HOST_BIN:$PATH"
           
-          # 3. 封包指令 (原文延续)
+          # 执行编译
           make target/linux/compile -j$(nproc)
           make target/linux/install -j$(nproc) DEVICE_${{ env.DEVICE_NAME }}=y || \
           make target/linux/install -j1 V=s DEVICE_${{ env.DEVICE_NAME }}=y
 
-      - name: 10. 发布产物
+      - name: 9. 发布产物
         uses: softprops/action-gh-release@v2
         if: success()
         with:
-          tag_name: SL3000-Final-${{ github.run_id }}
-          files: ${{ env.WORKDIR }}/bin/targets/mediatek/filogic/*.bin
+          tag_name: SL3000-v1.0-${{ github.run_id }}
+          files: |
+            ${{ env.WORKDIR }}/bin/targets/mediatek/filogic/*.bin
+            ${{ env.WORKDIR }}/bin/targets/mediatek/filogic/*.manifest
           token: ${{ secrets.GITHUB_TOKEN }}
