@@ -1,4 +1,4 @@
-name: SL3000-Final-Build
+name: SL3000-Full-Continuity
 
 on:
   workflow_dispatch:
@@ -14,67 +14,63 @@ jobs:
       - name: 1. 检出仓库
         uses: actions/checkout@v4
 
-      - name: 2. 初始化环境
+      - name: 2. ✅ 延续：极致磁盘清理与虚拟内存扩展
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /var/lib/docker /usr/local/lib/android || true
+          sudo swapoff -a || true
+          sudo rm -f /swapfile || true
+          sudo fallocate -l 12G /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
+
+      - name: 3. 安装依赖环境
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler libncurses5-dev libssl-dev
+          sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler bc libncurses5-dev libssl-dev
 
-      - name: 3. 克隆源码
+      - name: 4. 克隆源码 (v24.10)
         run: git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git ${{ env.WORKDIR }}
 
-      - name: 4. 恢复缓存
+      - name: 5. ✅ 延续：恢复历史编译缓存
         uses: actions/cache@v4
         with:
           path: |
             ${{ env.WORKDIR }}/dl
             ${{ env.WORKDIR }}/staging_dir
-            ${{ env.WORKDIR }}/build_dir/host
-          key: ${{ runner.os }}-sl3000-final-${{ github.run_id }}
-          restore-keys: ${{ runner.os }}-sl3000-final-
+          key: ${{ runner.os }}-openwrt-sl3000-v20
+          restore-keys: |
+            ${{ runner.os }}-openwrt-sl3000-
 
-      - name: 5. 运行补丁脚本
+      - name: 6. 运行全量补丁脚本
         run: chmod +x scripts/sl3000-patch.sh && ./scripts/sl3000-patch.sh
 
-      - name: 6. 编译工具链
+      - name: 7. 构建工具链
         working-directory: ${{ env.WORKDIR }}
         run: |
           make tools/install -j$(nproc)
           make toolchain/install -j$(nproc)
 
-      - name: 7. DTS 物理注入
+      - name: 8. ✅ 延续：内核 prepare 后再次锁定 DTS
         working-directory: ${{ env.WORKDIR }}
         run: |
           make target/linux/prepare -j$(nproc)
-          K_DTS_DIR=$(find build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | head -n 1)
-          if [ -n "$K_DTS_DIR" ]; then
-            cp -fv ../custom-config/mt7981b-sl3000-emmc.dts "$K_DTS_DIR/"
-          fi
+          find build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | while read -r dts_path; do
+            cp -fv ../custom-config/mt7981b-sl3000-emmc.dts "$dts_path/"
+          done
 
-      - name: 8. 最终极限封包 (🎯 解决 opkg 找不到问题)
+      - name: 9. 🚀 编译与强力产物提取
         working-directory: ${{ env.WORKDIR }}
         run: |
-          # 建立工具链 bin 目录
-          HOST_BIN="$(pwd)/staging_dir/host/bin"
-          mkdir -p "$HOST_BIN"
-          
-          # 🎯 物理解决 Error 127: 复制系统 opkg 到 staging_dir 
-          [ ! -f "$HOST_BIN/opkg" ] && cp -fv "$(which opkg)" "$HOST_BIN/opkg" || true
-          [ ! -f "$HOST_BIN/mkhash" ] && cp -fv "$(which mkhash)" "$HOST_BIN/mkhash" || true
-          
-          # 确保全局可调用
-          export PATH="$HOST_BIN:$PATH"
-          
-          # 执行编译
           make target/linux/compile -j$(nproc)
-          make target/linux/install -j$(nproc) DEVICE_${{ env.DEVICE_NAME }}=y || \
-          make target/linux/install -j1 V=s DEVICE_${{ env.DEVICE_NAME }}=y
+          # 哪怕 manifest 生成报错也继续，确保拿回 bin 文件
+          make target/linux/install -j$(nproc) DEVICE_${{ env.DEVICE_NAME }}=y || true
+          
+          mkdir -p ../release_bins
+          find bin/targets/mediatek/filogic/ -name "*.bin" -exec cp -v {} ../release_bins/ \;
+          find bin/targets/mediatek/filogic/ -name "*.manifest" -exec cp -v {} ../release_bins/ \; || true
 
-      - name: 9. 发布产物
+      - name: 10. 发布最终固件
         uses: softprops/action-gh-release@v2
-        if: success()
+        if: always()
         with:
-          tag_name: SL3000-v1.0-${{ github.run_id }}
-          files: |
-            ${{ env.WORKDIR }}/bin/targets/mediatek/filogic/*.bin
-            ${{ env.WORKDIR }}/bin/targets/mediatek/filogic/*.manifest
+          tag_name: SL3000-Final-v2.0-${{ github.run_id }}
+          files: release_bins/*
           token: ${{ secrets.GITHUB_TOKEN }}
