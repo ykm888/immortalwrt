@@ -14,7 +14,7 @@ jobs:
       - name: "1. 检出代码"
         uses: actions/checkout@v4
 
-      - name: "2. ✅ [延续设置] 12G Swap 物理挂载"
+      - name: "2. ✅ [延续设置] 12G Swap 物理挂载与系统清理"
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /var/lib/docker /usr/local/lib/android || true
           sudo swapoff -a || true
@@ -34,53 +34,58 @@ jobs:
             ${{ env.WORKDIR }}/staging_dir
             ${{ env.WORKDIR }}/build_dir/host
             ${{ env.WORKDIR }}/build_dir/toolchain-*
-          key: ${{ runner.os }}-sl3000-chain-v30-final
+          key: ${{ runner.os }}-sl3000-chain-v120-absolute
           restore-keys: |
             ${{ runner.os }}-sl3000-chain-
 
-      - name: "5. 运行补丁脚本 (内含 binutils 和 Bison 修复)"
+      - name: "5. 运行补丁脚本 (内含 binutils/dtc/Bison 全量物理修复)"
         run: chmod +x scripts/sl3000-patch.sh && ./scripts/sl3000-patch.sh
 
-      - name: "6. 🔥 [核心对齐] 物理锁定 Bison 环境变量"
+      - name: "6. 🔥 [核心归位] 物理清理缓存毒瘤并锁定 PATH 优先级"
         run: |
-          # 针对 bison: m4sugar.m4: No such file or directory 报错的物理修复
+          # 💡 [关键补全] 物理删除缓存中损坏的文件，确保绝对路径引用失效
+          rm -rf ${{ env.WORKDIR }}/staging_dir/host/bin/bison || true
+          rm -rf ${{ env.WORKDIR }}/staging_dir/host/bin/m4 || true
+          rm -rf ${{ env.WORKDIR }}/staging_dir/host/share/bison || true
           B_DATA=$(pkg-config --variable=pkgdatadir bison 2>/dev/null || echo '/usr/share/bison')
           echo "BISON_PKGDATADIR=$B_DATA" >> $GITHUB_ENV
           echo "M4=$(which m4)" >> $GITHUB_ENV
+          # 💡 [关键补全] 强制 PATH 顺序，物理屏蔽任何坏路径干扰
+          echo "PATH=/usr/bin:/usr/local/bin:$PATH" >> $GITHUB_ENV
 
-      - name: "7. 🔥 [物理焊死] 注入 DTS 到内核源码树 (解决编译报错)"
+      - name: "7. 🔥 [物理焊死] 注入 DTS 并物理注册内核 Makefile"
         working-directory: ${{ env.WORKDIR }}
         run: |
-          # 必须先 prepare，使 build_dir 下产生解压后的内核源码
+          # 必须执行 prepare，否则 build_dir 里的内核源码还没展开
           make target/linux/prepare -j$(nproc)
           DTS_FILE="${{ github.workspace }}/custom-config/mt7981b-sl3000-emmc.dts"
-          # 深度物理强灌：直接将 DTS 注入 build_dir 里的内核源码树
+          # 深度物理强灌：无论内核怎么解压，全部塞进去并写死编译目标
           find build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | while read -r dts_path; do
-            echo "💉 注入 DTS 到内核源码: $dts_path"
+            echo "💉 物理注入 DTS 到源码: $dts_path"
             cp -fv "$DTS_FILE" "$dts_path/"
-            # 在内核对应的 Makefile 中注册 dtb
-            grep -q "mt7981b-sl3000-emmc.dtb" "$dts_path/Makefile" || echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$dts_path/Makefile"
+            if ! grep -q "mt7981b-sl3000-emmc.dtb" "$dts_path/Makefile"; then
+              echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$dts_path/Makefile"
+            fi
           done
 
-      - name: "8. ✅ [物理归位] 编译内核与合成 (环境变量加持)"
+      - name: "8. ✅ [物理归位] 全量编译 (显式传递双重环境锁)"
         working-directory: ${{ env.WORKDIR }}
-        env:
-          BISON_PKGDATADIR: ${{ env.BISON_PKGDATADIR }}
-          M4: ${{ env.M4 }}
         run: |
-          # 加上环境变量传递，确保内核编译阶段 bison 不会报错
+          # 显式传递所有物理锁定的环境变量与路径
+          export PATH=${{ env.PATH }}
+          export BISON_PKGDATADIR=${{ env.BISON_PKGDATADIR }}
+          export M4=${{ env.M4 }}
           make target/linux/compile -j$(nproc) || make target/linux/compile -j1 V=s
           make package/install -j$(nproc) || make package/install -j1 V=s
           make target/linux/install -j$(nproc) DEVICE_${{ env.DEVICE_NAME }}=y || \
-          make target/linux/install -j1 V=s DEVICE_${{ env.DEVICE_NAME }}=y || true
+          make target/linux/install -j1 V=s DEVICE_${{ env.DEVICE_NAME }}=y
 
-      - name: "9. 🔥 [精准打捞] 暴力全盘搜索固件"
+      - name: "9. 🔥 [物理打捞] 暴力搜索固件"
         working-directory: ${{ env.WORKDIR }}
         if: always()
         run: |
           mkdir -p ../release_bins
-          find bin/targets build_dir -type f -size +10M -name "*sysupgrade.bin" -not -path "*/staging_dir/*" -exec cp -v {} ../release_bins/ \; 2>/dev/null || true
-          find bin/targets -name "*.manifest" -exec cp -v {} ../release_bins/ \; 2>/dev/null || true
+          find bin/targets -type f -size +10M -name "*sysupgrade.bin" -exec cp -v {} ../release_bins/ \; 2>/dev/null || true
           ls -lh ../release_bins/
 
       - name: "10. 发布最终 Release"
@@ -91,7 +96,7 @@ jobs:
           files: release_bins/*
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: "11. 🛡️ [物理封印] 失败也强制保存全量缓存"
+      - name: "11. 🛡️ [物理封印] 强制保存缓存"
         uses: actions/cache/save@v4
         if: always()
         with:
@@ -100,4 +105,4 @@ jobs:
             ${{ env.WORKDIR }}/staging_dir
             ${{ env.WORKDIR }}/build_dir/host
             ${{ env.WORKDIR }}/build_dir/toolchain-*
-          key: ${{ runner.os }}-sl3000-chain-v30-final
+          key: ${{ runner.os }}-sl3000-chain-v120-absolute
