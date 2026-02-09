@@ -14,7 +14,7 @@ jobs:
       - name: "1. 检出代码"
         uses: actions/checkout@v4
 
-      - name: "2. ✅ [延续设置] 12G Swap 物理挂载与系统清理"
+      - name: "2. ✅ [2/6 修复] 12G Swap 挂载与系统清理"
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /var/lib/docker /usr/local/lib/android || true
           sudo swapoff -a || true
@@ -38,41 +38,39 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-sl3000-chain-
 
-      - name: "5. 运行补丁脚本 (内含 binutils/dtc/Bison 全量物理修复)"
+      - name: "5. 运行补丁脚本 (全量补丁归位)"
         run: chmod +x scripts/sl3000-patch.sh && ./scripts/sl3000-patch.sh
 
-      - name: "6. 🔥 [核心归位] 锁定 PATH 优先级与环境变量"
+      - name: "6. 🔥 [核心锁] 锁定 PATH 优先级与 Bison 环境"
         run: |
-          # 💡 [修正] 之前 rm 命令误删了脚本建立的软链接，导致 flex 找不到 m4
-          # 软链接 (ln -sf) 已经覆盖了缓存毒瘤，此处只需锁定环境变量
           B_DATA=$(pkg-config --variable=pkgdatadir bison 2>/dev/null || echo '/usr/share/bison')
           echo "BISON_PKGDATADIR=$B_DATA" >> $GITHUB_ENV
           echo "M4=$(which m4)" >> $GITHUB_ENV
-          # 💡 [关键补全] 强制 PATH 顺序，确保系统优先使用宿主机工具
+          # 强制系统 PATH 置顶，物理屏蔽缓存中损坏的 bin 路径
           echo "PATH=/usr/bin:/usr/local/bin:$PATH" >> $GITHUB_ENV
 
-      - name: "7. 🔥 [物理焊死] 注入 DTS 并物理注册内核 Makefile"
+      - name: "7. 🔥 [2/8 修复] 内核源码物理强灌 (解决 DTS 识别失败)"
         working-directory: ${{ env.WORKDIR }}
         run: |
-          # 必须执行 prepare，否则 build_dir 里的内核源码还没展开
+          # 必须执行 prepare，展开 build_dir 内的内核源码
           make target/linux/prepare -j$(nproc)
           DTS_FILE="${{ github.workspace }}/custom-config/mt7981b-sl3000-emmc.dts"
-          # 深度物理强灌：无论内核怎么解压，全部塞进去并写死编译目标
+          # 在所有可能的内核路径中强制注入 DTS 并注册 Makefile
           find build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | while read -r dts_path; do
-            echo "💉 物理注入 DTS 到源码: $dts_path"
+            echo "💉 注入 DTS 到: $dts_path"
             cp -fv "$DTS_FILE" "$dts_path/"
             if ! grep -q "mt7981b-sl3000-emmc.dtb" "$dts_path/Makefile"; then
               echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$dts_path/Makefile"
             fi
           done
 
-      - name: "8. ✅ [物理归位] 全量编译 (显式传递双重环境锁)"
+      - name: "8. ✅ [物理归位] 全量编译 (显式传递环境锁)"
         working-directory: ${{ env.WORKDIR }}
         run: |
-          # 显式传递所有物理锁定的环境变量与路径
           export PATH=${{ env.PATH }}
           export BISON_PKGDATADIR=${{ env.BISON_PKGDATADIR }}
           export M4=${{ env.M4 }}
+          # 依次执行编译，确保所有物理路径生效
           make target/linux/compile -j$(nproc) || make target/linux/compile -j1 V=s
           make package/install -j$(nproc) || make package/install -j1 V=s
           make target/linux/install -j$(nproc) DEVICE_${{ env.DEVICE_NAME }}=y || \
@@ -84,17 +82,16 @@ jobs:
         run: |
           mkdir -p ../release_bins
           find bin/targets -type f -size +10M -name "*sysupgrade.bin" -exec cp -v {} ../release_bins/ \; 2>/dev/null || true
-          ls -lh ../release_bins/
 
       - name: "10. 发布最终 Release"
         uses: softprops/action-gh-release@v2
         if: always()
         with:
-          tag_name: SL3000-Final-v4.0-${{ github.run_id }}
+          tag_name: SL3000-Final-All-Fixes-${{ github.run_id }}
           files: release_bins/*
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: "11. 🛡️ [物理封印] 强制保存缓存"
+      - name: "11. 🛡️ [物理封印] 保存缓存"
         uses: actions/cache/save@v4
         if: always()
         with:
