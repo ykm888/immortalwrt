@@ -17,6 +17,8 @@ rm -rf tmp .config
     echo "CONFIG_TARGET_mediatek=y"
     echo "CONFIG_TARGET_mediatek_filogic=y"
     echo "CONFIG_TARGET_mediatek_filogic_DEVICE_sl3000-emmc=y"
+    # ✅ 修正：锁定 128MB 内核分区配置
+    echo "CONFIG_TARGET_KERNEL_PARTSIZE=128"
 } > .config
 [ -f "${SRC_DIR}/sl3000.config" ] && cat "${SRC_DIR}/sl3000.config" >> .config
 
@@ -26,15 +28,21 @@ for tool in m4 flex bison gawk; do
     ln -sf "$(which $tool)" "staging_dir/host/bin/$tool" || true
 done
 
-# 3. 延续设置：注入 DTS 和 128MB 内核 Makefile [cite: 2026-02-06, 2026-02-07]
+# 3. 物理修复：将 DTS 放入预备目录 (供工作流第 8 步精准捞取)
 mkdir -p "target/linux/mediatek/dts"
 cp -fv "${SRC_DIR}/mt7981b-sl3000-emmc.dts" "target/linux/mediatek/dts/"
 
-mkdir -p "target/linux/mediatek/image"
-cp -fv "${SRC_DIR}/filogic.mk" "target/linux/mediatek/image/filogic.mk"
+# 4. 核心补丁：物理强制修改 filogic.mk [cite: 2026-02-09]
+# 不再直接覆盖，而是向现有的 Makefile 追加我们的设备定义，防止丢失官方驱动
+FILOGIC_MK="target/linux/mediatek/image/filogic.mk"
+if [ -f "${SRC_DIR}/filogic.mk" ]; then
+    echo "💉 注入 SL3000 设备定义到 $FILOGIC_MK"
+    cat "${SRC_DIR}/filogic.mk" >> "$FILOGIC_MK"
+fi
 
-# 4. 锁定分区大小 [cite: 2026-02-07]
+# 5. 锁定分区大小 [cite: 2026-02-07]
 make defconfig
-sed -i 's/CONFIG_TARGET_ROOTFS_PARTSIZE=.*/CONFIG_TARGET_ROOTFS_PARTSIZE=512/' .config
+# 确保 rootfs 至少有 1GB 空间定义
+sed -i 's/CONFIG_TARGET_ROOTFS_PARTSIZE=.*/CONFIG_TARGET_ROOTFS_PARTSIZE=1024/' .config
 
 echo "✅ [SL3000] 补丁完成。历史修复已全部携带。"
