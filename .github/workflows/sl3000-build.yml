@@ -14,7 +14,7 @@ jobs:
       - name: "1. 检出代码"
         uses: actions/checkout@v4
 
-      - name: "2. 🚀 [极致优化] 腾出磁盘空间 & 12G Swap (延续全量修复)"
+      - name: "2. 🚀 [极致优化] 腾出磁盘空间 & 12G Swap (全量延续)"
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /var/lib/docker || true
           sudo docker image prune -a -f || true
@@ -27,15 +27,23 @@ jobs:
       - name: "3. 克隆源码"
         run: git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git ${{ env.WORKDIR }}
 
-      - name: "4. 运行补丁脚本 (补丁全量归位)"
+      - name: "4. 运行补丁脚本 (全量补丁归位)"
         run: chmod +x scripts/sl3000-patch.sh && ./scripts/sl3000-patch.sh
 
-      - name: "5. 🛠️ [核心物理修复] 强制钉死 Host 工具 (解决 opkg 127 错误)"
+      - name: "5. 🛠️ [核心修复] 物理钉死地基 (确保无缓存也跑通)"
         working-directory: ${{ env.WORKDIR }}
         run: |
-          # 物理阻塞：在并发前，必须先单独、单线程生成 opkg 宿主程序
-          make package/opkg/host/compile -j1 V=s
+          # 阶梯 1: 物理钉死解压与哈希工具 (解决 libdeflate-gzip 报错)
+          make tools/libdeflate/compile -j$(nproc)
+          make tools/mkhash/compile -j$(nproc)
+          
+          # 阶梯 2: 全量安装基础 Tools，失败自动单线程自愈
           make tools/install -j$(nproc) || make tools/install -j1 V=s
+          
+          # 阶梯 3: 钉死 opkg 宿主程序 (解决 Error 127 根源)
+          make package/opkg/host/compile -j1 V=s
+          
+          # 阶梯 4: 构建交叉编译器
           make toolchain/install -j$(nproc) || make toolchain/install -j1 V=s
 
       - name: "6. 🔥 [内核强灌] 注入 DTS 并修改 Makefile (延续修复 2/8)"
@@ -50,14 +58,14 @@ jobs:
             fi
           done
 
-      - name: "7. ✅ [全链路自愈] 编译固件 (全量功能对齐)"
+      - name: "7. ✅ [全链路自愈] 编译固件 (延续 2/7 全量设置)"
         working-directory: ${{ env.WORKDIR }}
         run: |
           # 动态捕获并物理置顶编译器路径
           TCPATH=$(find ${{ github.workspace }}/${{ env.WORKDIR }}/staging_dir -name "bin" -type d | grep "toolchain" | head -n 1)
           [ -n "$TCPATH" ] && export PATH="$TCPATH:$PATH"
           
-          # 自愈编译：失败自动降线程切换详细模式
+          # 自愈编译模式
           make target/linux/compile -j$(nproc) || make target/linux/compile -j1 V=s
           make package/install -j$(nproc) || make package/install -j1 V=s
           make target/linux/install -j$(nproc) DEVICE_${{ env.DEVICE_NAME }}=y || \
@@ -70,11 +78,11 @@ jobs:
           mkdir -p ../release_bins
           find bin/targets -type f -size +10M -name "*sysupgrade.bin" -exec cp -v {} ../release_bins/ \; || true
 
-      - name: "9. 🚀 [自动发布] GitHub Release (延续全量逻辑)"
+      - name: "9. 🚀 [自动发布] GitHub Release (延续全量功能)"
         uses: softprops/action-gh-release@v2
         if: always()
         with:
-          tag_name: SL3000-Extreme-Fix-${{ github.run_id }}
+          tag_name: SL3000-Success-Final-${{ github.run_id }}
           files: release_bins/*
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -85,4 +93,4 @@ jobs:
           path: |
             ${{ env.WORKDIR }}/dl
             ${{ env.WORKDIR }}/staging_dir
-          key: ${{ runner.os }}-sl3000-chain-v900-final
+          key: ${{ runner.os }}-sl3000-chain-v1000-final
