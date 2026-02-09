@@ -36,7 +36,6 @@ jobs:
             ${{ env.WORKDIR }}/dl
             ${{ env.WORKDIR }}/staging_dir
             ${{ env.WORKDIR }}/build_dir/host
-          # 精准修复：更换 Key 名称为 v4-clean 以跳过损坏的旧缓存 [cite: 2026-02-09]
           key: ${{ runner.os }}-sl3000-v4-clean-${{ github.run_id }}
           restore-keys: |
             ${{ runner.os }}-sl3000-v4-clean-
@@ -50,43 +49,52 @@ jobs:
           make tools/install -j$(nproc)
           make toolchain/install -j$(nproc)
 
-      - name: "8. 延续设置：DTS 物理注入 (修复路径拼接)"
+      - name: "8. 延续设置：DTS 物理注入与内核注册 (修正点)"
         working-directory: ${{ env.WORKDIR }}
         run: |
           make target/linux/prepare -j$(nproc)
-          # 精准修复：使用 workspace 绝对路径，消除 cp: cannot stat 报错 [cite: 2026-02-08, 2026-02-09]
           DTS_SRC="${{ github.workspace }}/custom-config/mt7981b-sl3000-emmc.dts"
+          
+          # 精准修复：注入 DTS 的同时，必须在内核 Makefile 中注册该设备 [cite: 2026-02-09]
           find build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | while read -r dts_path; do
             cp -fv "$DTS_SRC" "$dts_path/"
+            MAKEFILE="$dts_path/Makefile"
+            if [ -f "$MAKEFILE" ]; then
+              grep -q "mt7981b-sl3000-emmc.dtb" "$MAKEFILE" || echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$MAKEFILE"
+              echo "✅ 已在 $MAKEFILE 注册 dtb"
+            fi
           done
 
-      - name: "9. 强力编译 (含 Error 127 容错)"
+      - name: "9. 强力编译 (严格校验模式)"
         working-directory: ${{ env.WORKDIR }}
         run: |
+          # 物理修复：移除 || true 以暴露真实错误，增加 V=s 详细日志 [cite: 2026-02-09]
           make target/linux/compile -j$(nproc)
-          make target/linux/install -j$(nproc) DEVICE_${{ env.DEVICE_NAME }}=y || make target/linux/install -j1 V=s DEVICE_${{ env.DEVICE_NAME }}=y || true
+          make target/linux/install -j$(nproc) DEVICE_${{ env.DEVICE_NAME }}=y V=s
 
-      - name: "10. 延续设置：深度打捞与压缩 (修复 find 目录报错)"
+      - name: "10. 延续设置：精准固件打捞 (排除干扰项)"
         working-directory: ${{ env.WORKDIR }}
         if: always()
         run: |
           mkdir -p ../release_bins
-          echo "🔍 正在执行过滤与压缩..."
-          # 精准修复：前置目录探测，防止目录不存在时 find 报错 [cite: 2026-02-09]
-          SEARCH_PATHS=""
-          [ -d "bin/targets" ] && SEARCH_PATHS="$SEARCH_PATHS bin/targets"
-          [ -d "build_dir" ] && SEARCH_PATHS="$SEARCH_PATHS build_dir"
+          echo "🔍 正在从产出区提取固件..."
           
-          if [ -n "$SEARCH_PATHS" ]; then
-            find $SEARCH_PATHS -type f -size +10M -name "*sysupgrade.bin" 2>/dev/null | while read -r img; do
-              echo "📦 正在压缩: $img"
-              gzip -9 -c "$img" > "../release_bins/$(basename "$img").gz"
-            done
-            find $SEARCH_PATHS -type f -size +1c -name "*.manifest" 2>/dev/null -exec cp -v {} ../release_bins/ \;
+          # 精准修复：排除 staging_dir (那是你之前看到的工具链垃圾来源) [cite: 2026-02-09]
+          # 只搜寻 >10MB 的 .bin 文件
+          find . -type f -size +10M -name "*sysupgrade.bin" -not -path "*/staging_dir/*" | while read -r img; do
+            echo "📦 发现真正固件: $img"
+            gzip -9 -c "$img" > "../release_bins/$(basename "$img").gz"
+          done
+          
+          # 只捞取 bin 目录下的真正 manifest 清单
+          [ -d "bin/targets" ] && find bin/targets -name "*.manifest" -exec cp -v {} ../release_bins/ \;
+          
+          # 诊断逻辑：如果没捞到固件，打印全盘大文件 [cite: 2026-02-09]
+          if [ -z "$(ls -A ../release_bins | grep 'gz')" ]; then
+            echo "❌ 未发现固件！全盘扫描诊断中..."
+            find . -type f -size +10M -not -path "*/.git/*" -not -path "*/staging_dir/*"
+            echo "diagnostic_log" > ../release_bins/no_firmware_found.txt
           fi
-          
-          # 延续设置：防止 Release 因空文件夹报错 [cite: 2026-02-09]
-          [ -z "$(ls -A ../release_bins)" ] && echo "no_firmware_found" > ../release_bins/readme.txt
           ls -lh ../release_bins/
 
       - name: "11. 发布最终固件"
