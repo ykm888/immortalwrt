@@ -1,47 +1,84 @@
 name: SL3000-Extreme-Final
+
 on:
   workflow_dispatch:
+
 env:
   WORKDIR: openwrt
   DEVICE_NAME: sl3000-emmc
+
 jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
-      - name: "✅ 12G Swap 与系统准备 (2/6 补丁)"
+      - name: "1. 检出代码"
+        uses: actions/checkout@v4
+
+      - name: "2. ✅ [2/6 修复] 12G Swap 挂载与环境准备"
         run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /var/lib/docker /usr/local/lib/android || true
           sudo swapoff -a || true
           sudo rm -f /swapfile || true
           sudo fallocate -l 12G /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
           sudo apt-get update
           sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler bc libncurses5-dev libssl-dev
-      - name: "克隆源码"
+
+      - name: "3. 克隆源码"
         run: git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git ${{ env.WORKDIR }}
-      - name: "执行补丁脚本"
+
+      - name: "4. 运行补丁脚本 (全量补丁归位)"
         run: chmod +x scripts/sl3000-patch.sh && ./scripts/sl3000-patch.sh
-      - name: "🔥 内核 DTS 物理强灌 (2/8 补丁)"
+
+      - name: "5. 🔥 [2/8 修复] 内核源码物理注入 (解决 DTS 识别失败)"
         working-directory: ${{ env.WORKDIR }}
         run: |
+          # 必须先 prepare，物理展开内核源码
           make target/linux/prepare -j$(nproc)
           DTS_FILE="${{ github.workspace }}/custom-config/mt7981b-sl3000-emmc.dts"
+          # 物理搜索 build_dir 内所有内核路径并强灌 DTS 及其编译条目
           find build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | while read -r dts_path; do
+            echo "💉 注入 DTS 到: $dts_path"
             cp -fv "$DTS_FILE" "$dts_path/"
             if ! grep -q "mt7981b-sl3000-emmc.dtb" "$dts_path/Makefile"; then
               echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$dts_path/Makefile"
             fi
           done
-      - name: "全量编译 (延续全部设置)"
+
+      - name: "6. ✅ [物理归位] 全量编译 (延续全部设置)"
         working-directory: ${{ env.WORKDIR }}
         run: |
+          # 显式传递之前验证成功的环境变量锁
+          B_DATA=$(pkg-config --variable=pkgdatadir bison 2>/dev/null || echo '/usr/share/bison')
+          export BISON_PKGDATADIR=$B_DATA
+          export M4=$(which m4)
+          
           make target/linux/compile -j$(nproc) || make target/linux/compile -j1 V=s
-          make package/install -j$(nproc)
-          make target/linux/install -j$(nproc) DEVICE_${{ env.DEVICE_NAME }}=y
-      - name: "🛡️ 生成全新完整缓存"
+          make package/install -j$(nproc) || make package/install -j1 V=s
+          make target/linux/install -j$(nproc) DEVICE_${{ env.DEVICE_NAME }}=y || \
+          make target/linux/install -j1 V=s DEVICE_${{ env.DEVICE_NAME }}=y
+
+      - name: "7. 🔥 [物理打捞] 搜索并提取固件"
+        working-directory: ${{ env.WORKDIR }}
+        if: always()
+        run: |
+          mkdir -p ../release_bins
+          find bin/targets -type f -size +10M -name "*sysupgrade.bin" -exec cp -v {} ../release_bins/ \; 2>/dev/null || true
+
+      - name: "8. 发布 Release"
+        uses: softprops/action-gh-release@v2
+        if: always()
+        with:
+          tag_name: SL3000-Final-v4.0-${{ github.run_id }}
+          files: release_bins/*
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: "9. 🛡️ [物理封印] 保存全新完整缓存"
         uses: actions/cache/save@v4
         if: success()
         with:
           path: |
             ${{ env.WORKDIR }}/dl
             ${{ env.WORKDIR }}/staging_dir
-          key: ${{ runner.os }}-sl3000-chain-v200-new
+            ${{ env.WORKDIR }}/build_dir/host
+            ${{ env.WORKDIR }}/build_dir/toolchain-*
+          key: ${{ runner.os }}-sl3000-chain-v200-full
