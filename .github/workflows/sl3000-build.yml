@@ -26,7 +26,7 @@ jobs:
       - name: "3. 克隆源码"
         run: git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git ${{ env.WORKDIR }}
 
-      - name: "4. 🔥 [物理隔离] 全量工具链缓存恢复"
+      - name: "4. 🔥 [物理隔离] 恢复全量工具链缓存"
         uses: actions/cache/restore@v4
         with:
           path: |
@@ -34,53 +34,57 @@ jobs:
             ${{ env.WORKDIR }}/staging_dir
             ${{ env.WORKDIR }}/build_dir/host
             ${{ env.WORKDIR }}/build_dir/toolchain-*
-          key: ${{ runner.os }}-sl3000-full-chain-v23-final
+          key: ${{ runner.os }}-sl3000-chain-v27-final
           restore-keys: |
-            ${{ runner.os }}-sl3000-full-chain-
+            ${{ runner.os }}-sl3000-chain-
 
       - name: "5. 运行补丁脚本 (内含 binutils 核心修复)"
         run: chmod +x scripts/sl3000-patch.sh && ./scripts/sl3000-patch.sh
 
-      - name: "6. ✅ [提速逻辑] 命中则跳过编译"
+      - name: "6. ✅ [提速逻辑] 检查工具链状态"
         working-directory: ${{ env.WORKDIR }}
         run: |
           if [ -d "staging_dir/host/bin" ] && [ -x "staging_dir/host/bin/bison" ]; then
-            echo "✅ 工具链已从缓存恢复，直接合成固件"
+            echo "✅ 工具链已物理恢复"
           else
-            echo "⚠️ 缓存未命中，执行全量编译（已注入 binutils 物理修复）"
+            echo "⚠️ 缓存未命中，执行全量编译"
             make tools/install -j$(nproc)
             make toolchain/install -j$(nproc) || make toolchain/install -j1 V=s
           fi
 
-      - name: "7. ✅ [延续设置] DTS 注入与内核注册"
+      - name: "7. 🔥 [物理焊死] 解决内核编译报错的终极步骤"
         working-directory: ${{ env.WORKDIR }}
         run: |
+          # 必须先 prepare，使 build_dir 下产生解压后的内核源码
           make target/linux/prepare -j$(nproc)
-          DTS_SRC="${{ github.workspace }}/custom-config/mt7981b-sl3000-emmc.dts"
+          DTS_FILE="${{ github.workspace }}/custom-config/mt7981b-sl3000-emmc.dts"
+          # 深度物理强灌：直接将 DTS 注入 build_dir 里的内核源码树
           find build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | while read -r dts_path; do
-            cp -fv "$DTS_SRC" "$dts_path/"
-            MAKEFILE="$dts_path/Makefile"
-            [ -f "$MAKEFILE" ] && (grep -q "mt7981b-sl3000-emmc.dtb" "$MAKEFILE" || echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$MAKEFILE")
+            echo "💉 注入 DTS 到内核源码: $dts_path"
+            cp -fv "$DTS_FILE" "$dts_path/"
+            # 在内核对应的 Makefile 中注册 dtb
+            grep -q "mt7981b-sl3000-emmc.dtb" "$dts_path/Makefile" || echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$dts_path/Makefile"
           done
 
-      - name: "8. ✅ [物理归位] 核心编译与 Error 127 容错"
+      - name: "8. ✅ [物理归位] 编译内核与合成"
         working-directory: ${{ env.WORKDIR }}
         run: |
-          make target/linux/compile -j$(nproc)
+          # 此时内核树已经包含了 SL3000 补丁，不会再报错 target/linux failed
+          make target/linux/compile -j$(nproc) || make target/linux/compile -j1 V=s
           make package/install -j$(nproc) || make package/install -j1 V=s
           make target/linux/install -j$(nproc) DEVICE_${{ env.DEVICE_NAME }}=y || \
           make target/linux/install -j1 V=s DEVICE_${{ env.DEVICE_NAME }}=y || true
 
-      - name: "9. 🔥 [物理打捞] 暴力全盘搜索固件 (杜绝丢失)"
+      - name: "9. 🔥 [物理打捞] 暴力全盘搜索固件"
         working-directory: ${{ env.WORKDIR }}
         if: always()
         run: |
           mkdir -p ../release_bins
-          find bin/targets build_dir -type f -size +10M -name "*sysupgrade.bin" -not -path "*/staging_dir/*" -exec cp -v {} ../release_bins/ \; 2>/dev/null || true
+          find bin/targets build_dir -type f -size +10M -name "*sysupgrade.bin" -exec cp -v {} ../release_bins/ \; 2>/dev/null || true
           find bin/targets -name "*.manifest" -exec cp -v {} ../release_bins/ \; 2>/dev/null || true
           ls -lh ../release_bins/
 
-      - name: "10. 发布最终固件"
+      - name: "10. 发布最终 Release"
         uses: softprops/action-gh-release@v2
         if: always()
         with:
@@ -97,4 +101,4 @@ jobs:
             ${{ env.WORKDIR }}/staging_dir
             ${{ env.WORKDIR }}/build_dir/host
             ${{ env.WORKDIR }}/build_dir/toolchain-*
-          key: ${{ runner.os }}-sl3000-full-chain-v23-final
+          key: ${{ runner.os }}-sl3000-chain-v27-final
