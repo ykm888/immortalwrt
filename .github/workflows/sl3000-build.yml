@@ -14,7 +14,7 @@ jobs:
       - name: "1. 检出代码"
         uses: actions/checkout@v4
 
-      - name: "2. ✅ [延续设置] 12G Swap 与环境依赖"
+      - name: "2. ✅ [延续设置] 12G Swap 挂载"
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /var/lib/docker /usr/local/lib/android || true
           sudo swapoff -a || true
@@ -26,27 +26,32 @@ jobs:
       - name: "3. 克隆源码"
         run: git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git ${{ env.WORKDIR }}
 
-      - name: "4. ✅ [延续设置] 强制冷启动 (V4-Clean 缓存隔离)"
+      - name: "4. 🔥 [物理锁定] 全量工具链缓存恢复"
         uses: actions/cache/restore@v4
         with:
           path: |
             ${{ env.WORKDIR }}/dl
             ${{ env.WORKDIR }}/staging_dir
             ${{ env.WORKDIR }}/build_dir/host
-          key: ${{ runner.os }}-sl3000-v4-clean-${{ github.run_id }}
+            ${{ env.WORKDIR }}/build_dir/toolchain-*
+          key: ${{ runner.os }}-sl3000-full-chain-stable-v1
           restore-keys: |
-            ${{ runner.os }}-sl3000-v4-clean-
+            ${{ runner.os }}-sl3000-full-chain-stable-
 
       - name: "5. 运行补丁脚本"
         run: chmod +x scripts/sl3000-patch.sh && ./scripts/sl3000-patch.sh
 
-      - name: "6. 构建工具链"
+      - name: "6. ✅ [提速] 检查并跳过已缓存步骤"
         working-directory: ${{ env.WORKDIR }}
         run: |
-          make tools/install -j$(nproc)
-          make toolchain/install -j$(nproc)
+          if [ -d "staging_dir/host/bin" ] && [ -x "staging_dir/host/bin/bison" ]; then
+            echo "✅ 缓存命中，直接跳过工具链编译"
+          else
+            make tools/install -j$(nproc)
+            make toolchain/install -j$(nproc)
+          fi
 
-      - name: "7. ✅ [延续设置] DTS 注入与内核 Makefile 注册"
+      - name: "7. ✅ [延续设置] DTS 注入与注册"
         working-directory: ${{ env.WORKDIR }}
         run: |
           make target/linux/prepare -j$(nproc)
@@ -57,47 +62,24 @@ jobs:
             [ -f "$MAKEFILE" ] && (grep -q "mt7981b-sl3000-emmc.dtb" "$MAKEFILE" || echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$MAKEFILE")
           done
 
-      - name: "8. ✅ [物理修复] 填充 root-mediatek 并保留 Error 127 容错"
+      - name: "8. ✅ [延续设置] 核心编译与容错"
         working-directory: ${{ env.WORKDIR }}
         run: |
-          # 核心修复：强制先编译包，解决 mksquashfs 找不到源文件夹的问题 [cite: 2026-02-09]
           make target/linux/compile -j$(nproc)
           make package/install -j$(nproc) || make package/install -j1 V=s
-          # ✅ 延续：含容错的三段式安装
           make target/linux/install -j$(nproc) DEVICE_${{ env.DEVICE_NAME }}=y || \
           make target/linux/install -j1 V=s DEVICE_${{ env.DEVICE_NAME }}=y || true
 
-      - name: "9. 🔥 [终极打捞] 深度搜索固件 (绝不放过任何 .bin)"
+      - name: "9. 🔥 [物理打捞] 暴力搜索固件"
         working-directory: ${{ env.WORKDIR }}
         if: always()
         run: |
           mkdir -p ../release_bins
-          echo "🔍 正在进行全盘地毯式固件打捞..."
-          
-          # 1. 优先打捞：bin/targets (标准路径)
-          find bin/targets -type f -size +10M -name "*sysupgrade.bin" 2>/dev/null | while read -r img; do
-              echo "📦 捞出 bin 固件: $img"
-              cp -v "$img" "../release_bins/$(basename "$img")"
-          done
-          
-          # 2. 深度打捞：build_dir (物理绝杀，防止固件躲在中间目录) [cite: 2026-02-09]
-          if [ -z "$(ls -A ../release_bins | grep bin)" ]; then
-              echo "⚠️ 标准目录未发现固件，开始强力打捞 build_dir..."
-              find build_dir -type f -size +10M -name "*sysupgrade.bin" -not -path "*/staging_dir/*" 2>/dev/null | while read -r img; do
-                  echo "📦 深度捞出固件: $img"
-                  cp -v "$img" "../release_bins/$(basename "$img")"
-              done
-          fi
-
-          # 3. manifest 与诊断日志
+          find bin/targets build_dir -type f -size +10M -name "*sysupgrade.bin" -not -path "*/staging_dir/*" -exec cp -v {} ../release_bins/ \; 2>/dev/null || true
           find bin/targets -name "*.manifest" -exec cp -v {} ../release_bins/ \; 2>/dev/null || true
-          if [ -z "$(ls -A ../release_bins)" ]; then
-              echo "❌ 打捞失败，打印全盘 10MB+ 文件清单进行诊断："
-              find . -type f -size +10M -not -path "*/.git/*"
-          fi
           ls -lh ../release_bins/
 
-      - name: "10. 发布最终固件"
+      - name: "10. 发布固件 (若生成)"
         uses: softprops/action-gh-release@v2
         if: always()
         with:
@@ -105,7 +87,7 @@ jobs:
           files: release_bins/*
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: "11. ✅ [延续设置] 强制保存缓存 (V4-Clean)"
+      - name: "11. 🛡️ [关键点] 失败也保存整个工具链缓存"
         uses: actions/cache/save@v4
         if: always()
         with:
@@ -113,4 +95,5 @@ jobs:
             ${{ env.WORKDIR }}/dl
             ${{ env.WORKDIR }}/staging_dir
             ${{ env.WORKDIR }}/build_dir/host
-          key: ${{ runner.os }}-sl3000-v4-clean-${{ github.run_id }}
+            ${{ env.WORKDIR }}/build_dir/toolchain-*
+          key: ${{ runner.os }}-sl3000-full-chain-stable-v1
