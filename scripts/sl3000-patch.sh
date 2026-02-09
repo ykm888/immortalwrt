@@ -5,14 +5,13 @@ REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd)
 WORKDIR="${REPO_ROOT}/openwrt"
 SRC_DIR="${REPO_ROOT}/custom-config"
 
-echo "💎 [SL3000] 执行物理全量修复：合并所有历史验证补丁，锁定构建地基..."
+echo "💎 [SL3000] 执行全量补丁归位：锁定所有历史验证补丁点..."
 
 cd "${WORKDIR}"
 
-# [延续修复 1：2/9] 屏蔽所有 Makefile 中的 -Werror (物理解决 DTC/Binutils 报错)
+# [延续修复 1：2/9] 物理屏蔽 Makefile 中的 -Werror (物理解决 DTC/Binutils 报错)
 find . -name Makefile -exec sed -i 's/ERROR_ON_WARNING = y/ERROR_ON_WARNING = n/g' {} +
 find . -name "Makefile.dtc" -exec sed -i 's/-Werror//g' {} + || true
-find . -name "Makefile*" -exec sed -i 's/-Werror//g' {} + || true
 
 # [延续设置] Feeds 更新与安装
 ./scripts/feeds update -a && ./scripts/feeds install -a
@@ -25,7 +24,7 @@ done
 B_SHARE=$(pkg-config --variable=pkgdatadir bison 2>/dev/null || echo '/usr/share/bison')
 ln -sf "$B_SHARE" "staging_dir/host/share/bison" || true
 
-# [物理对齐 3] 2/7 锁定内核分区 128MB 与物理环境变量锁
+# [延续修复 3：2/7] 锁定内核分区 128MB 与物理环境变量锁
 rm -f .config
 {
     echo "CONFIG_TARGET_mediatek=y"
