@@ -14,7 +14,7 @@ jobs:
       - name: "1. 检出代码"
         uses: actions/checkout@v4
 
-      - name: "2. 🚀 [极致优化] 腾出磁盘空间 & 12G Swap (全量延续)"
+      - name: "2. 🚀 [极致优化] 腾出磁盘空间 & 12G Swap (全量延续 2/6)"
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /var/lib/docker || true
           sudo docker image prune -a -f || true
@@ -27,17 +27,17 @@ jobs:
       - name: "3. 克隆源码"
         run: git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git ${{ env.WORKDIR }}
 
-      - name: "4. 运行补丁脚本 (执行全量物理补丁)"
+      - name: "4. 运行补丁脚本 (执行全量补丁归位)"
         run: chmod +x scripts/sl3000-patch.sh && ./scripts/sl3000-patch.sh
 
-      - name: "5. 🛠️ [核心自愈] 串行化预编译 (解决 Compiler/opkg 丢失)"
+      - name: "5. 🛠️ [核心修复] 强制串行化预编译 (解决 opkg/gcc 丢失问题)"
         working-directory: ${{ env.WORKDIR }}
         run: |
-          # 强制先完成 tools，再完成 toolchain，不抢跑
-          make tools/install -j$(nproc) || make tools/install -j1 V=s
+          # 物理锁定：单线程确保 opkg/mkhash 生成，不准抢跑
+          make tools/install -j1 V=s
           make toolchain/install -j$(nproc) || make toolchain/install -j1 V=s
 
-      - name: "6. 🔥 [内核强灌] 注入 DTS 并修改 Makefile (2/8 补丁)"
+      - name: "6. 🔥 [内核强灌] 注入 DTS 并修改 Makefile (延续修复 2/8)"
         working-directory: ${{ env.WORKDIR }}
         run: |
           make target/linux/prepare -j$(nproc)
@@ -49,14 +49,14 @@ jobs:
             fi
           done
 
-      - name: "7. ✅ [全链路自愈] 编译固件 (延续全量设置)"
+      - name: "7. ✅ [全链路自愈] 编译固件 (延续 2/7 全量设置)"
         working-directory: ${{ env.WORKDIR }}
         run: |
-          # 动态捕获编译器路径并置顶
+          # 动态捕获并置顶编译器路径
           TCPATH=$(find ${{ github.workspace }}/${{ env.WORKDIR }}/staging_dir -name "bin" -type d | grep "toolchain" | head -n 1)
           [ -n "$TCPATH" ] && export PATH="$TCPATH:$PATH"
           
-          # 编译内核与包，失败自动转详细模式
+          # 开启自愈模式：失败自动降线程切换 V=s
           make target/linux/compile -j$(nproc) || make target/linux/compile -j1 V=s
           make package/install -j$(nproc) || make package/install -j1 V=s
           make target/linux/install -j$(nproc) DEVICE_${{ env.DEVICE_NAME }}=y || \
@@ -69,7 +69,7 @@ jobs:
           mkdir -p ../release_bins
           find bin/targets -type f -size +10M -name "*sysupgrade.bin" -exec cp -v {} ../release_bins/ \; || true
 
-      - name: "9. 🚀 [自动发布] GitHub Release"
+      - name: "9. 🚀 [自动发布] GitHub Release (延续全量功能)"
         uses: softprops/action-gh-release@v2
         if: always()
         with:
@@ -84,4 +84,4 @@ jobs:
           path: |
             ${{ env.WORKDIR }}/dl
             ${{ env.WORKDIR }}/staging_dir
-          key: ${{ runner.os }}-sl3000-chain-v400-clean
+          key: ${{ runner.os }}-sl3000-chain-v600-final
