@@ -1,26 +1,31 @@
 #!/bin/bash
 set -e
+
 REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd)
 WORKDIR="${REPO_ROOT}/openwrt"
 SRC_DIR="${REPO_ROOT}/custom-config"
 
-echo "💎 [SL3000] 全量补丁物理缝合：严禁漏掉任何历史逻辑..."
+echo "💎 [SL3000] 执行物理全量修复：拒绝偷工减料，强制补丁归位..."
+
 cd "${WORKDIR}"
 
-# [1] 2/9 修复：屏蔽 Werror
+# [修复点 1：2/9] 物理屏蔽所有 Makefile 中的 -Werror (解决构建中断)
 find . -name Makefile -exec sed -i 's/ERROR_ON_WARNING = y/ERROR_ON_WARNING = n/g' {} +
 find . -name "Makefile.dtc" -exec sed -i 's/-Werror//g' {} + || true
+find . -name "Makefile*" -exec sed -i 's/-Werror//g' {} + || true
 
-# [2] 延续：Feeds 更新
+# [延续设置] Feeds 管理
 ./scripts/feeds update -a && ./scripts/feeds install -a
 
-# [3] 2/5 修复：Bison/M4 映射
+# [修复点 2：2/5] Bison/M4 物理修复 (建立 share 映射解决 m4sugar 丢失)
 mkdir -p staging_dir/host/bin staging_dir/host/share
-for tool in m4 flex bison gawk; do ln -sf "$(which $tool)" "staging_dir/host/bin/$tool" || true; done
+for tool in m4 flex bison gawk; do
+    ln -sf "$(which $tool)" "staging_dir/host/bin/$tool" || true
+done
 B_SHARE=$(pkg-config --variable=pkgdatadir bison 2>/dev/null || echo '/usr/share/bison')
 ln -sf "$B_SHARE" "staging_dir/host/share/bison" || true
 
-# [4] 2/7 修复：分区与配置锁定
+# [修复点 3：2/7] 物理锁定内核分区与物理变量锁
 rm -f .config
 {
     echo "CONFIG_TARGET_mediatek=y"
@@ -32,9 +37,11 @@ rm -f .config
 } > .config
 [ -f "${SRC_DIR}/sl3000.config" ] && cat "${SRC_DIR}/sl3000.config" >> .config
 
-# [5] 2/7 修复：DTS/Image 注入与 1G 分区
+# [修复点 4：2/7] DTS 与 Image 物理注入 (SL3000 专属)
 mkdir -p "target/linux/mediatek/dts" "target/linux/mediatek/image"
 cp -fv "${SRC_DIR}/mt7981b-sl3000-emmc.dts" "target/linux/mediatek/dts/"
 cp -fv "${SRC_DIR}/filogic.mk" "target/linux/mediatek/image/filogic.mk"
+
+# [修复点 5：2/7] Rootfs 1G 分区物理锁定
 make defconfig
 sed -i 's/CONFIG_TARGET_ROOTFS_PARTSIZE=.*/CONFIG_TARGET_ROOTFS_PARTSIZE=1024/' .config
