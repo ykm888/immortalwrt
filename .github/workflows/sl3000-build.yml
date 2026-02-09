@@ -21,7 +21,7 @@ jobs:
           sudo rm -f /swapfile || true
           sudo fallocate -l 12G /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
 
-      - name: "3. 安装依赖环境"
+      - name: "3. 安装必备依赖"
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler bc libncurses5-dev libssl-dev
@@ -29,16 +29,17 @@ jobs:
       - name: "4. 克隆源码 (v24.10)"
         run: git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git ${{ env.WORKDIR }}
 
-      - name: "5. 延续设置：分体式缓存恢复"
+      - name: "5. 延续设置：强制冷启动 (解决 binutils 报错)"
         uses: actions/cache/restore@v4
         with:
           path: |
             ${{ env.WORKDIR }}/dl
             ${{ env.WORKDIR }}/staging_dir
             ${{ env.WORKDIR }}/build_dir/host
-          key: ${{ runner.os }}-sl3000-v3-${{ github.run_id }}
+          # 精准修复：更换 Key 名称为 v4-clean 以跳过损坏的旧缓存 [cite: 2026-02-09]
+          key: ${{ runner.os }}-sl3000-v4-clean-${{ github.run_id }}
           restore-keys: |
-            ${{ runner.os }}-sl3000-v2-
+            ${{ runner.os }}-sl3000-v4-clean-
 
       - name: "6. 运行全量补丁脚本"
         run: chmod +x scripts/sl3000-patch.sh && ./scripts/sl3000-patch.sh
@@ -49,11 +50,11 @@ jobs:
           make tools/install -j$(nproc)
           make toolchain/install -j$(nproc)
 
-      - name: "8. 延续设置：DTS 物理注入 (路径修复)"
+      - name: "8. 延续设置：DTS 物理注入 (修复路径拼接)"
         working-directory: ${{ env.WORKDIR }}
         run: |
           make target/linux/prepare -j$(nproc)
-          # 使用 workspace 绝对路径，解决 cp: cannot stat 报错
+          # 精准修复：使用 workspace 绝对路径，消除 cp: cannot stat 报错 [cite: 2026-02-08, 2026-02-09]
           DTS_SRC="${{ github.workspace }}/custom-config/mt7981b-sl3000-emmc.dts"
           find build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | while read -r dts_path; do
             cp -fv "$DTS_SRC" "$dts_path/"
@@ -65,32 +66,34 @@ jobs:
           make target/linux/compile -j$(nproc)
           make target/linux/install -j$(nproc) DEVICE_${{ env.DEVICE_NAME }}=y || make target/linux/install -j1 V=s DEVICE_${{ env.DEVICE_NAME }}=y || true
 
-      - name: "10. 延续设置：深度打捞与压缩 (容错修复)"
+      - name: "10. 延续设置：深度打捞与压缩 (修复 find 目录报错)"
         working-directory: ${{ env.WORKDIR }}
         if: always()
         run: |
           mkdir -p ../release_bins
-          echo "🔍 启动深度打捞..."
-          # 定义多个可能的固件生成路径，防止目录不存在报错
-          SEARCH_PATHS="bin/targets/ build_dir/target-aarch64_*/linux-mediatek_filogic/"
+          echo "🔍 正在执行过滤与压缩..."
+          # 精准修复：前置目录探测，防止目录不存在时 find 报错 [cite: 2026-02-09]
+          SEARCH_PATHS=""
+          [ -d "bin/targets" ] && SEARCH_PATHS="$SEARCH_PATHS bin/targets"
+          [ -d "build_dir" ] && SEARCH_PATHS="$SEARCH_PATHS build_dir"
           
-          # 仅打捞大于 10MB 的有效固件并压缩
-          find $SEARCH_PATHS -type f -size +10M -name "*sysupgrade.bin" 2>/dev/null | while read -r img; do
-            echo "📦 发现并压缩固件: $img"
-            gzip -9 -c "$img" > "../release_bins/$(basename "$img").gz"
-          done
+          if [ -n "$SEARCH_PATHS" ]; then
+            find $SEARCH_PATHS -type f -size +10M -name "*sysupgrade.bin" 2>/dev/null | while read -r img; do
+              echo "📦 正在压缩: $img"
+              gzip -9 -c "$img" > "../release_bins/$(basename "$img").gz"
+            done
+            find $SEARCH_PATHS -type f -size +1c -name "*.manifest" 2>/dev/null -exec cp -v {} ../release_bins/ \;
+          fi
           
-          # 打捞非空清单文件
-          find $SEARCH_PATHS -type f -size +1c -name "*.manifest" 2>/dev/null -exec cp -v {} ../release_bins/ \;
-          
-          # 检查提取结果
+          # 延续设置：防止 Release 因空文件夹报错 [cite: 2026-02-09]
+          [ -z "$(ls -A ../release_bins)" ] && echo "no_firmware_found" > ../release_bins/readme.txt
           ls -lh ../release_bins/
 
-      - name: "11. 发布固件"
+      - name: "11. 发布最终固件"
         uses: softprops/action-gh-release@v2
         if: always()
         with:
-          tag_name: SL3000-Final-v3.0-${{ github.run_id }}
+          tag_name: SL3000-Final-v4.0-${{ github.run_id }}
           files: release_bins/*
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -102,4 +105,4 @@ jobs:
             ${{ env.WORKDIR }}/dl
             ${{ env.WORKDIR }}/staging_dir
             ${{ env.WORKDIR }}/build_dir/host
-          key: ${{ runner.os }}-sl3000-v3-${{ github.run_id }}
+          key: ${{ runner.os }}-sl3000-v4-clean-${{ github.run_id }}
