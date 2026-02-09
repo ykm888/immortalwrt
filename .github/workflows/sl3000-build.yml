@@ -34,20 +34,20 @@ jobs:
             ${{ env.WORKDIR }}/staging_dir
             ${{ env.WORKDIR }}/build_dir/host
             ${{ env.WORKDIR }}/build_dir/toolchain-*
-          key: ${{ runner.os }}-sl3000-chain-v17-stable
+          key: ${{ runner.os }}-sl3000-full-chain-v23-final
           restore-keys: |
-            ${{ runner.os }}-sl3000-chain-
+            ${{ runner.os }}-sl3000-full-chain-
 
-      - name: "5. 运行补丁脚本 (无乱改，全量延续)"
+      - name: "5. 运行补丁脚本 (内含 binutils 核心修复)"
         run: chmod +x scripts/sl3000-patch.sh && ./scripts/sl3000-patch.sh
 
-      - name: "6. ✅ [提速逻辑] 命中则跳过工具链重编"
+      - name: "6. ✅ [提速逻辑] 命中则跳过编译"
         working-directory: ${{ env.WORKDIR }}
         run: |
           if [ -d "staging_dir/host/bin" ] && [ -x "staging_dir/host/bin/bison" ]; then
-            echo "✅ 工具链已物理恢复，直接合成固件"
+            echo "✅ 工具链已从缓存恢复，直接合成固件"
           else
-            echo "⚠️ 缓存未命中，执行全量编译（已注入 binutils 修复）"
+            echo "⚠️ 缓存未命中，执行全量编译（已注入 binutils 物理修复）"
             make tools/install -j$(nproc)
             make toolchain/install -j$(nproc) || make toolchain/install -j1 V=s
           fi
@@ -71,7 +71,7 @@ jobs:
           make target/linux/install -j$(nproc) DEVICE_${{ env.DEVICE_NAME }}=y || \
           make target/linux/install -j1 V=s DEVICE_${{ env.DEVICE_NAME }}=y || true
 
-      - name: "9. 🔥 [精准打捞] 暴力搜索固件"
+      - name: "9. 🔥 [物理打捞] 暴力全盘搜索固件 (杜绝丢失)"
         working-directory: ${{ env.WORKDIR }}
         if: always()
         run: |
@@ -80,7 +80,7 @@ jobs:
           find bin/targets -name "*.manifest" -exec cp -v {} ../release_bins/ \; 2>/dev/null || true
           ls -lh ../release_bins/
 
-      - name: "10. 发布最终 Release"
+      - name: "10. 发布最终固件"
         uses: softprops/action-gh-release@v2
         if: always()
         with:
@@ -88,7 +88,7 @@ jobs:
           files: release_bins/*
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: "11. 🛡️ [物理封印] 失败也强制保存缓存"
+      - name: "11. 🛡️ [物理封印] 失败也强制保存全量缓存"
         uses: actions/cache/save@v4
         if: always()
         with:
@@ -97,4 +97,4 @@ jobs:
             ${{ env.WORKDIR }}/staging_dir
             ${{ env.WORKDIR }}/build_dir/host
             ${{ env.WORKDIR }}/build_dir/toolchain-*
-          key: ${{ runner.os }}-sl3000-chain-v17-stable
+          key: ${{ runner.os }}-sl3000-full-chain-v23-final
