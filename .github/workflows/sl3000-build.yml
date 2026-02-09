@@ -41,16 +41,14 @@ jobs:
       - name: "5. 运行补丁脚本 (内含 binutils/dtc/Bison 全量物理修复)"
         run: chmod +x scripts/sl3000-patch.sh && ./scripts/sl3000-patch.sh
 
-      - name: "6. 🔥 [核心归位] 物理清理缓存毒瘤并锁定 PATH 优先级"
+      - name: "6. 🔥 [核心归位] 锁定 PATH 优先级与环境变量"
         run: |
-          # 💡 [关键补全] 物理删除缓存中损坏的文件，确保绝对路径引用失效
-          rm -rf ${{ env.WORKDIR }}/staging_dir/host/bin/bison || true
-          rm -rf ${{ env.WORKDIR }}/staging_dir/host/bin/m4 || true
-          rm -rf ${{ env.WORKDIR }}/staging_dir/host/share/bison || true
+          # 💡 [修正] 之前 rm 命令误删了脚本建立的软链接，导致 flex 找不到 m4
+          # 软链接 (ln -sf) 已经覆盖了缓存毒瘤，此处只需锁定环境变量
           B_DATA=$(pkg-config --variable=pkgdatadir bison 2>/dev/null || echo '/usr/share/bison')
           echo "BISON_PKGDATADIR=$B_DATA" >> $GITHUB_ENV
           echo "M4=$(which m4)" >> $GITHUB_ENV
-          # 💡 [关键补全] 强制 PATH 顺序，物理屏蔽任何坏路径干扰
+          # 💡 [关键补全] 强制 PATH 顺序，确保系统优先使用宿主机工具
           echo "PATH=/usr/bin:/usr/local/bin:$PATH" >> $GITHUB_ENV
 
       - name: "7. 🔥 [物理焊死] 注入 DTS 并物理注册内核 Makefile"
