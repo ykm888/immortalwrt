@@ -9,16 +9,17 @@ define Device/sl3000-emmc
   KERNEL_SIZE := 131072k
   BOARD_ROOTFS_PARTSIZE := 1048576
   
-  # ✅ [修正逻辑] 显式指定 FIT 生成逻辑，防止 install 阶段找不到 KERNEL
-  KERNEL := kernel-bin | lzma
-  KERNEL_INITRAMFS := kernel-bin | lzma
+  # ✅ [修正逻辑] 必须加入 dtb 注入，确保 1GB RAM 的 DTS 真正生效
+  # 使用 fit 模式是 ImmortalWrt 24.10 最稳健的选择
+  KERNEL := kernel-bin | lzma | dtb
+  KERNEL_INITRAMFS := kernel-bin | lzma | dtb
   
   # ✅ [延续原文] 存储与文件系统核心包
   DEVICE_PACKAGES := kmod-mmc kmod-sdhci-mtk kmod-fs-f2fs f2fs-tools f2fsck \
 	parted lsblk blkid block-mount kmod-zram zram-swap
   
   IMAGES := sysupgrade.bin
-  # ✅ [绝杀修复] 移除复杂的 pad-to 逻辑，改用标准的镜像合成宏
+  # ✅ [物理修复] 显式指定 metadata 设备名，防止多机型编译混淆
   IMAGE/sysupgrade.bin := append-kernel | pad-to $$(KERNEL_SIZE) | append-rootfs | append-metadata
 endef
 TARGET_DEVICES += sl3000-emmc
