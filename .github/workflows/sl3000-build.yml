@@ -34,25 +34,21 @@ jobs:
             ${{ env.WORKDIR }}/staging_dir
             ${{ env.WORKDIR }}/build_dir/host
             ${{ env.WORKDIR }}/build_dir/toolchain-*
-          key: ${{ runner.os }}-sl3000-chain-v27-final
+          key: ${{ runner.os }}-sl3000-chain-v30-final
           restore-keys: |
             ${{ runner.os }}-sl3000-chain-
 
-      - name: "5. 运行补丁脚本 (内含 binutils 核心修复)"
+      - name: "5. 运行补丁脚本 (内含 binutils 和 Bison 修复)"
         run: chmod +x scripts/sl3000-patch.sh && ./scripts/sl3000-patch.sh
 
-      - name: "6. ✅ [提速逻辑] 检查工具链状态"
-        working-directory: ${{ env.WORKDIR }}
+      - name: "6. 🔥 [核心对齐] 物理锁定 Bison 环境变量"
         run: |
-          if [ -d "staging_dir/host/bin" ] && [ -x "staging_dir/host/bin/bison" ]; then
-            echo "✅ 工具链已物理恢复"
-          else
-            echo "⚠️ 缓存未命中，执行全量编译"
-            make tools/install -j$(nproc)
-            make toolchain/install -j$(nproc) || make toolchain/install -j1 V=s
-          fi
+          # 针对 bison: m4sugar.m4: No such file or directory 报错的物理修复
+          B_DATA=$(pkg-config --variable=pkgdatadir bison 2>/dev/null || echo '/usr/share/bison')
+          echo "BISON_PKGDATADIR=$B_DATA" >> $GITHUB_ENV
+          echo "M4=$(which m4)" >> $GITHUB_ENV
 
-      - name: "7. 🔥 [物理焊死] 解决内核编译报错的终极步骤"
+      - name: "7. 🔥 [物理焊死] 注入 DTS 到内核源码树 (解决编译报错)"
         working-directory: ${{ env.WORKDIR }}
         run: |
           # 必须先 prepare，使 build_dir 下产生解压后的内核源码
@@ -66,21 +62,24 @@ jobs:
             grep -q "mt7981b-sl3000-emmc.dtb" "$dts_path/Makefile" || echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$dts_path/Makefile"
           done
 
-      - name: "8. ✅ [物理归位] 编译内核与合成"
+      - name: "8. ✅ [物理归位] 编译内核与合成 (环境变量加持)"
         working-directory: ${{ env.WORKDIR }}
+        env:
+          BISON_PKGDATADIR: ${{ env.BISON_PKGDATADIR }}
+          M4: ${{ env.M4 }}
         run: |
-          # 此时内核树已经包含了 SL3000 补丁，不会再报错 target/linux failed
+          # 加上环境变量传递，确保内核编译阶段 bison 不会报错
           make target/linux/compile -j$(nproc) || make target/linux/compile -j1 V=s
           make package/install -j$(nproc) || make package/install -j1 V=s
           make target/linux/install -j$(nproc) DEVICE_${{ env.DEVICE_NAME }}=y || \
           make target/linux/install -j1 V=s DEVICE_${{ env.DEVICE_NAME }}=y || true
 
-      - name: "9. 🔥 [物理打捞] 暴力全盘搜索固件"
+      - name: "9. 🔥 [精准打捞] 暴力全盘搜索固件"
         working-directory: ${{ env.WORKDIR }}
         if: always()
         run: |
           mkdir -p ../release_bins
-          find bin/targets build_dir -type f -size +10M -name "*sysupgrade.bin" -exec cp -v {} ../release_bins/ \; 2>/dev/null || true
+          find bin/targets build_dir -type f -size +10M -name "*sysupgrade.bin" -not -path "*/staging_dir/*" -exec cp -v {} ../release_bins/ \; 2>/dev/null || true
           find bin/targets -name "*.manifest" -exec cp -v {} ../release_bins/ \; 2>/dev/null || true
           ls -lh ../release_bins/
 
@@ -101,4 +100,4 @@ jobs:
             ${{ env.WORKDIR }}/staging_dir
             ${{ env.WORKDIR }}/build_dir/host
             ${{ env.WORKDIR }}/build_dir/toolchain-*
-          key: ${{ runner.os }}-sl3000-chain-v27-final
+          key: ${{ runner.os }}-sl3000-chain-v30-final
