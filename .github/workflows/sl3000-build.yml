@@ -1,71 +1,72 @@
 name: SL3000-Extreme-Final
-
 on:
   workflow_dispatch:
-
 env:
   WORKDIR: openwrt
   DEVICE_NAME: sl3000-emmc
-
 jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      - name: "1. 检出代码"
-        uses: actions/checkout@v4
-
-      - name: "2. ✅ [延续 2/6 修复] 12G Swap 与环境准备"
+      - uses: actions/checkout@v4
+      - name: "🚀 优化磁盘空间 & 环境准备 (全量延续)"
         run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /var/lib/docker || true
+          sudo docker image prune -a -f || true
           sudo swapoff -a || true
           sudo rm -f /swapfile || true
           sudo fallocate -l 12G /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
           sudo apt-get update
           sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler bc libncurses5-dev libssl-dev
-
-      - name: "3. 克隆源码"
+      - name: "克隆源码"
         run: git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git ${{ env.WORKDIR }}
-
-      - name: "4. 运行补丁脚本 (执行全量物理补丁)"
+      - name: "执行补丁脚本"
         run: chmod +x scripts/sl3000-patch.sh && ./scripts/sl3000-patch.sh
-
-      - name: "5. 🔥 [核心修复] 预编译工具链 (解决清空缓存后编译器丢失)"
+      - name: "🛠️ 工具链预编译 (解决 Compiler Not Found)"
         working-directory: ${{ env.WORKDIR }}
         run: |
-          # 必须先执行 tools 和 toolchain 的安装，否则内核编译必报 gcc not found
           make tools/install -j$(nproc)
           make toolchain/install -j$(nproc)
-
-      - name: "6. 🔥 [延续 2/8 修复] 内核 DTS 强行物理注入"
+      - name: "🔥 内核 DTS 物理强灌 (2/8 补丁)"
         working-directory: ${{ env.WORKDIR }}
         run: |
           make target/linux/prepare -j$(nproc)
           DTS_FILE="${{ github.workspace }}/custom-config/mt7981b-sl3000-emmc.dts"
-          # 物理搜索内核源码路径并强灌 DTS 及其 Makefile 条目
           find build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | while read -r dts_path; do
             cp -fv "$DTS_FILE" "$dts_path/"
             if ! grep -q "mt7981b-sl3000-emmc.dtb" "$dts_path/Makefile"; then
               echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$dts_path/Makefile"
             fi
           done
-
-      - name: "7. ✅ [延续 2/7 修复] 全量编译固件"
+      - name: "✅ 全链路自愈编译 (延续全量设置)"
         working-directory: ${{ env.WORKDIR }}
         run: |
-          # 动态捕获刚刚编译生成的交叉编译器路径
+          # 自动补全路径
           TCPATH=$(find ${{ github.workspace }}/${{ env.WORKDIR }}/staging_dir -name "bin" -type d | grep "toolchain" | head -n 1)
           [ -n "$TCPATH" ] && export PATH="$TCPATH:$PATH"
-          
+          # 自愈模式：失败自动降线程重试
           make target/linux/compile -j$(nproc) || make target/linux/compile -j1 V=s
-          make package/install -j$(nproc)
-          make target/linux/install -j$(nproc) DEVICE_${{ env.DEVICE_NAME }}=y
-
-      - name: "8. 🛡️ [物理封印] 保存全新完整缓存"
+          make package/install -j$(nproc) || make package/install -j1 V=s
+          make target/linux/install -j$(nproc) DEVICE_${{ env.DEVICE_NAME }}=y || \
+          make target/linux/install -j1 V=s DEVICE_${{ env.DEVICE_NAME }}=y
+      - name: "📦 自动发布固件"
+        if: always()
+        working-directory: ${{ env.WORKDIR }}
+        run: |
+          mkdir -p ../release_bins
+          find bin/targets -type f -size +10M -name "*sysupgrade.bin" -exec cp -v {} ../release_bins/ \;
+      - name: "🚀 发布 GitHub Release"
+        uses: softprops/action-gh-release@v2
+        if: always()
+        with:
+          tag_name: SL3000-Extreme-Build-${{ github.run_id }}
+          files: release_bins/*
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: "🛡️ 保存物理封印缓存"
         uses: actions/cache/save@v4
         if: success()
         with:
           path: |
             ${{ env.WORKDIR }}/dl
             ${{ env.WORKDIR }}/staging_dir
-            ${{ env.WORKDIR }}/build_dir/host
-            ${{ env.WORKDIR }}/build_dir/toolchain-*
           key: ${{ runner.os }}-sl3000-chain-v300-full
