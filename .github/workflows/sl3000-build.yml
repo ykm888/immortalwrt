@@ -14,7 +14,7 @@ jobs:
       - name: "1. 检出代码"
         uses: actions/checkout@v4
 
-      - name: "2. ✅ [延续设置] 12G Swap 挂载"
+      - name: "2. ✅ [延续设置] 12G Swap 物理挂载 (解决 IO 阻塞)"
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /var/lib/docker /usr/local/lib/android || true
           sudo swapoff -a || true
@@ -26,7 +26,7 @@ jobs:
       - name: "3. 克隆源码"
         run: git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git ${{ env.WORKDIR }}
 
-      - name: "4. 🔥 [物理锁定] 全量工具链缓存恢复"
+      - name: "4. 🔥 [物理锁定] 全量工具链缓存恢复 (断点续传核心)"
         uses: actions/cache/restore@v4
         with:
           path: |
@@ -34,24 +34,25 @@ jobs:
             ${{ env.WORKDIR }}/staging_dir
             ${{ env.WORKDIR }}/build_dir/host
             ${{ env.WORKDIR }}/build_dir/toolchain-*
-          key: ${{ runner.os }}-sl3000-full-chain-stable-v1
+          # 使用固定 Key 物理锁定缓存，只要 key 不变，工具链永不重编
+          key: ${{ runner.os }}-sl3000-full-toolchain-v6-stable
           restore-keys: |
-            ${{ runner.os }}-sl3000-full-chain-stable-
+            ${{ runner.os }}-sl3000-full-toolchain-
 
-      - name: "5. 运行补丁脚本"
+      - name: "5. 运行补丁脚本 (延续全量设置)"
         run: chmod +x scripts/sl3000-patch.sh && ./scripts/sl3000-patch.sh
 
-      - name: "6. ✅ [提速] 检查并跳过已缓存步骤"
+      - name: "6. ✅ [提速逻辑] 命中缓存则跳过工具链重构"
         working-directory: ${{ env.WORKDIR }}
         run: |
           if [ -d "staging_dir/host/bin" ] && [ -x "staging_dir/host/bin/bison" ]; then
-            echo "✅ 缓存命中，直接跳过工具链编译"
+            echo "✅ 工具链已从缓存完整物理还原，跳过 1 小时的编译"
           else
             make tools/install -j$(nproc)
             make toolchain/install -j$(nproc)
           fi
 
-      - name: "7. ✅ [延续设置] DTS 注入与注册"
+      - name: "7. ✅ [延续设置] DTS 注入与内核注册"
         working-directory: ${{ env.WORKDIR }}
         run: |
           make target/linux/prepare -j$(nproc)
@@ -62,7 +63,7 @@ jobs:
             [ -f "$MAKEFILE" ] && (grep -q "mt7981b-sl3000-emmc.dtb" "$MAKEFILE" || echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$MAKEFILE")
           done
 
-      - name: "8. ✅ [延续设置] 核心编译与容错"
+      - name: "8. ✅ [物理归位] 编译合成与 Error 127 容错 (延续 2/9 修复)"
         working-directory: ${{ env.WORKDIR }}
         run: |
           make target/linux/compile -j$(nproc)
@@ -70,16 +71,17 @@ jobs:
           make target/linux/install -j$(nproc) DEVICE_${{ env.DEVICE_NAME }}=y || \
           make target/linux/install -j1 V=s DEVICE_${{ env.DEVICE_NAME }}=y || true
 
-      - name: "9. 🔥 [物理打捞] 暴力搜索固件"
+      - name: "9. 🔥 [精准打捞] 暴力全盘搜索固件 (杜绝丢失)"
         working-directory: ${{ env.WORKDIR }}
         if: always()
         run: |
           mkdir -p ../release_bins
+          # 物理打捞：无论在 bin 还是 build_dir，只要 >10MB 的 sysupgrade.bin 全捞走
           find bin/targets build_dir -type f -size +10M -name "*sysupgrade.bin" -not -path "*/staging_dir/*" -exec cp -v {} ../release_bins/ \; 2>/dev/null || true
           find bin/targets -name "*.manifest" -exec cp -v {} ../release_bins/ \; 2>/dev/null || true
           ls -lh ../release_bins/
 
-      - name: "10. 发布固件 (若生成)"
+      - name: "10. 发布最终固件"
         uses: softprops/action-gh-release@v2
         if: always()
         with:
@@ -87,7 +89,7 @@ jobs:
           files: release_bins/*
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: "11. 🛡️ [关键点] 失败也保存整个工具链缓存"
+      - name: "11. 🛡️ [关键点] 失败也要保存整个工具链缓存"
         uses: actions/cache/save@v4
         if: always()
         with:
@@ -96,4 +98,4 @@ jobs:
             ${{ env.WORKDIR }}/staging_dir
             ${{ env.WORKDIR }}/build_dir/host
             ${{ env.WORKDIR }}/build_dir/toolchain-*
-          key: ${{ runner.os }}-sl3000-full-chain-stable-v1
+          key: ${{ runner.os }}-sl3000-full-toolchain-v6-stable
