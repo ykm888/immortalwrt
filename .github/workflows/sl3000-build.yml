@@ -14,103 +14,75 @@ jobs:
       - name: "1. 检出代码"
         uses: actions/checkout@v4
 
-      - name: "2. 延续设置：磁盘清理与 12G Swap"
+      - name: "2. 环境准备：12G Swap 与磁盘清理"
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /var/lib/docker /usr/local/lib/android || true
           sudo swapoff -a || true
           sudo rm -f /swapfile || true
           sudo fallocate -l 12G /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
-
-      - name: "3. 安装必备依赖"
-        run: |
           sudo apt-get update
           sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler bc libncurses5-dev libssl-dev
 
-      - name: "4. 克隆源码 (v24.10)"
-        run: git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git ${{ env.WORKDIR }}
+      - name: "3. 克隆源码与同步补丁"
+        run: |
+          git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git ${{ env.WORKDIR }}
+          chmod +x scripts/sl3000-patch.sh
+          ./scripts/sl3000-patch.sh
 
-      - name: "5. 延续设置：强制冷启动 (解决 binutils 报错)"
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            ${{ env.WORKDIR }}/dl
-            ${{ env.WORKDIR }}/staging_dir
-            ${{ env.WORKDIR }}/build_dir/host
-          key: ${{ runner.os }}-sl3000-v4-clean-${{ github.run_id }}
-          restore-keys: |
-            ${{ runner.os }}-sl3000-v4-clean-
-
-      - name: "6. 运行全量补丁脚本"
-        run: chmod +x scripts/sl3000-patch.sh && ./scripts/sl3000-patch.sh
-
-      - name: "7. 构建工具链"
+      - name: "4. 构建工具链 (核心依赖)"
         working-directory: ${{ env.WORKDIR }}
         run: |
           make tools/install -j$(nproc)
           make toolchain/install -j$(nproc)
 
-      - name: "8. 延续设置：DTS 物理注入与内核注册 (修正点)"
+      - name: "5. DTS 物理注入与 Makefile 注册"
         working-directory: ${{ env.WORKDIR }}
         run: |
           make target/linux/prepare -j$(nproc)
           DTS_SRC="${{ github.workspace }}/custom-config/mt7981b-sl3000-emmc.dts"
-          
-          # 精准修复：注入 DTS 的同时，必须在内核 Makefile 中注册该设备 [cite: 2026-02-09]
+          # 物理修复：注入并强制注册，确保内核编译器不跳过它 [cite: 2026-02-09]
           find build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | while read -r dts_path; do
             cp -fv "$DTS_SRC" "$dts_path/"
             MAKEFILE="$dts_path/Makefile"
-            if [ -f "$MAKEFILE" ]; then
-              grep -q "mt7981b-sl3000-emmc.dtb" "$MAKEFILE" || echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$MAKEFILE"
-              echo "✅ 已在 $MAKEFILE 注册 dtb"
-            fi
+            [ -f "$MAKEFILE" ] && (grep -q "mt7981b-sl3000-emmc.dtb" "$MAKEFILE" || echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$MAKEFILE")
           done
 
-      - name: "9. 强力编译 (严格校验模式)"
+      - name: "6. 终极全量编译 (彻底解决 No such file 报错)"
         working-directory: ${{ env.WORKDIR }}
         run: |
-          # 物理修复：移除 || true 以暴露真实错误，增加 V=s 详细日志 [cite: 2026-02-09]
+          # 1. 先进行内核编译
           make target/linux/compile -j$(nproc)
+          # 2. 关键：先执行默认包安装，生成 rootfs 目录结构 [cite: 2026-02-09]
+          make package/install -j$(nproc) || make package/install -j1 V=s
+          # 3. 生成最终镜像，去掉 || true 暴露真实错误
           make target/linux/install -j$(nproc) DEVICE_${{ env.DEVICE_NAME }}=y V=s
 
-      - name: "10. 延续设置：精准固件打捞 (排除干扰项)"
+      - name: "7. 精准打捞：暴力清除非固件碎屑"
         working-directory: ${{ env.WORKDIR }}
         if: always()
         run: |
           mkdir -p ../release_bins
-          echo "🔍 正在从产出区提取固件..."
-          
-          # 精准修复：排除 staging_dir (那是你之前看到的工具链垃圾来源) [cite: 2026-02-09]
-          # 只搜寻 >10MB 的 .bin 文件
-          find . -type f -size +10M -name "*sysupgrade.bin" -not -path "*/staging_dir/*" | while read -r img; do
-            echo "📦 发现真正固件: $img"
-            gzip -9 -c "$img" > "../release_bins/$(basename "$img").gz"
-          done
-          
-          # 只捞取 bin 目录下的真正 manifest 清单
-          [ -d "bin/targets" ] && find bin/targets -name "*.manifest" -exec cp -v {} ../release_bins/ \;
-          
-          # 诊断逻辑：如果没捞到固件，打印全盘大文件 [cite: 2026-02-09]
-          if [ -z "$(ls -A ../release_bins | grep 'gz')" ]; then
-            echo "❌ 未发现固件！全盘扫描诊断中..."
-            find . -type f -size +10M -not -path "*/.git/*" -not -path "*/staging_dir/*"
-            echo "diagnostic_log" > ../release_bins/no_firmware_found.txt
+          echo "🔍 启动高精度固件搜索..."
+          # 仅在 bin 目录下寻找真正生成的 .bin 固件 [cite: 2026-02-09]
+          if [ -d "bin/targets" ]; then
+            find bin/targets -type f -name "*sysupgrade.bin" | while read -r img; do
+              echo "📦 命中真实固件: $img"
+              gzip -9 -c "$img" > "../release_bins/$(basename "$img").gz"
+            done
+            find bin/targets -type f -name "*.manifest" -exec cp -v {} ../release_bins/ \;
           fi
-          ls -lh ../release_bins/
+          
+          # 诊断：如果 Release 目录依然为空，列出所有 10MB 以上文件
+          if [ -z "$(ls -A ../release_bins)" ]; then
+            echo "❌ 警告：未发现固件！全盘扫描大文件定位原因："
+            find . -type f -size +10M -not -path "*/.git/*" -not -path "*/staging_dir/*"
+            echo "build_failed_check_step6_logs" > ../release_bins/FAILURE_LOG.txt
+          fi
 
-      - name: "11. 发布最终固件"
+      - name: "8. 发布固件"
         uses: softprops/action-gh-release@v2
         if: always()
         with:
-          tag_name: SL3000-Final-v4.0-${{ github.run_id }}
+          tag_name: SL3000-Extreme-v4.0-${{ github.run_id }}
           files: release_bins/*
           token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: "12. 强制保存缓存 (无论成败)"
-        uses: actions/cache/save@v4
-        if: always()
-        with:
-          path: |
-            ${{ env.WORKDIR }}/dl
-            ${{ env.WORKDIR }}/staging_dir
-            ${{ env.WORKDIR }}/build_dir/host
-          key: ${{ runner.os }}-sl3000-v4-clean-${{ github.run_id }}
