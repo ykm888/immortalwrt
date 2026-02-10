@@ -5,28 +5,28 @@ REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd)
 WORKDIR="${REPO_ROOT}/openwrt"
 SRC_DIR="${REPO_ROOT}/custom-config"
 
-echo "💎 [SL3000] 执行物理补丁全量归位：严禁漏改，严禁偷工减料..."
+echo "💎 [SL3000] 执行物理补丁全量归位：严格执行原文照抄原则..."
 
 cd "${WORKDIR}"
 
-# [1] 物理创建地基目录
+# [1] 物理建立基础地基目录
 mkdir -p staging_dir/host/bin staging_dir/host/share
 
 # [2] 延续修复：2/9 物理屏蔽所有 Makefile 中的 -Werror
 find . -name Makefile -exec sed -i 's/ERROR_ON_WARNING = y/ERROR_ON_WARNING = n/g' {} +
 find . -name "Makefile.dtc" -exec sed -i 's/-Werror//g' {} + || true
 
-# [3] 延续设置：Feeds 管理
+# [3] 延续设置：Feeds 管理 (物理清除旧索引)
 ./scripts/feeds update -a && ./scripts/feeds install -a
 
-# [4] 延续修复：2/5 物理封印宿主工具 (解决 mkhash/libdeflate 报错)
+# [4] 延续修复：2/5 物理封印宿主工具 (借用系统工具避开自建 Bug)
 for tool in m4 flex bison gawk sed patch tar xz gzip bzip2 perl python3 wget curl; do
     ln -sf "$(which $tool)" "staging_dir/host/bin/$tool" || true
 done
 B_SHARE=$(pkg-config --variable=pkgdatadir bison 2>/dev/null || echo '/usr/share/bison')
 ln -sf "$B_SHARE" "staging_dir/host/share/bison" || true
 
-# [5] 延续修复：2/7 锁定内核分区 128MB 与物理变量
+# [5] 延续修复：2/7 锁定内核分区 128MB 与物理变量锁
 rm -f .config
 {
     echo "CONFIG_TARGET_mediatek=y"
