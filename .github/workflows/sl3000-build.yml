@@ -13,10 +13,10 @@ jobs:
     runs-on: ubuntu-22.04
     defaults:
       run:
-        working-directory: ${{ env.WORKDIR }} # 👈 全局统一目录，彻底修复错误
+        working-directory: ${{ env.WORKDIR }}
     steps:
       - name: "1. 检出代码"
-        uses: actions/checkout@4
+        uses: actions/checkout@v4  # 👈 修复这里
 
       - name: "2. 🚀 腾出磁盘空间 & 12G Swap"
         run: |
@@ -42,7 +42,7 @@ jobs:
           git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git ${{ env.WORKDIR }}
         working-directory: ${{ github.workspace }}
 
-      - name: "5. 🛡️ 恢复缓存（卡住自动跳过）"
+      - name: "5. 🛡️ 恢复缓存"
         uses: actions/cache/restore@v4
         with:
           path: |
