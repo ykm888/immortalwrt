@@ -36,22 +36,83 @@ jobs:
         run: |
           git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git ${{ env.WORKDIR }}
 
-      - name: "5. 复制脚本 & 执行补丁（✅ 去掉缓存，直接跑，永不卡住）"
+      - name: "5. 🛡️ 恢复缓存（修复：不锁死、超时自动跳过）"
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ${{ env.WORKDIR }}/dl
+            ${{ env.WORKDIR }}/staging_dir
+            ${{ env.WORKDIR }}/build_dir/host
+          key: ${{ runner.os }}-${{ env.CACHE_KEY }}-${{ hashFiles('**/feeds.conf.default') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ env.CACHE_KEY }}-
+            ${{ runner.os }}-sl3000-
+        continue-on-error: true  # 👈 核心修复：缓存失败/卡住自动跳过
+
+      - name: "6. 复制脚本 & 执行补丁（关键修复）"
         working-directory: ${{ env.WORKDIR }}
         run: |
           cp -rf ../scripts ./
           cp -rf ../custom-config ./
-          chmod +x scripts/clean-feeds.sh
-          chmod +x scripts/build.sh
-          ./scripts/clean-feeds.sh
-          ./scripts/build.sh
+          chmod +x scripts/sl3000-patch.sh
+          ./scripts/sl3000-patch.sh
 
-      - name: "6. 编译固件"
+      - name: "7. 更新 feeds"
         working-directory: ${{ env.WORKDIR }}
         run: |
-          make -j$(nproc) V=w
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
 
-      - name: "7. 上传固件"
+      - name: "8. ✅ 加载配置 & make defconfig（必过）"
+        working-directory: ${{ env.WORKDIR }}
+        run: |
+          [ -f custom-config/.config ] && cp custom-config/.config .
+          make defconfig
+
+      - name: "9. 构建 host tools"
+        working-directory: ${{ env.WORKDIR }}
+        run: |
+          make tools/install -j$(nproc) V=s || make tools/install -j1 V=s
+          ls -la staging_dir/host/bin/usign || exit 1
+
+      - name: "10. 构建工具链"
+        working-directory: ${{ env.WORKDIR }}
+        run: |
+          make toolchain/install -j$(nproc) V=s || make toolchain/install -j1 V=s
+
+      - name: "11. 🔥 注入 DTS"
+        working-directory: ${{ env.WORKDIR }}
+        run: |
+          make target/linux/prepare -j$(nproc) || make target/linux/prepare -j1 V=s
+          DTS_FILE="custom-config/mt7981b-sl3000-emmc.dts"
+          if [ -f "$DTS_FILE" ]; then
+            find build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | while read dts_path; do
+              cp -fv "$DTS_FILE" "$dts_path/"
+              if ! grep -q "mt7981b-sl3000-emmc.dtb" "$dts_path/Makefile"; then
+                echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$dts_path/Makefile"
+              fi
+            done
+          fi
+
+      - name: "12. 编译内核"
+        working-directory: ${{ env.WORKDIR }}
+        run: |
+          make target/linux/compile -j$(nproc) V=s || make target/linux/compile -j1 V=s
+
+      - name: "13. 编译所有软件包"
+        working-directory: ${{ env.WORKDIR }}
+        run: |
+          make package/compile -j$(nproc) V=s || make package/compile -j1 V=s
+
+      - name: "14. 构建完整固件"
+        working-directory: ${{ env.WORKDIR }}
+        run: |
+          make package/install -j$(nproc) V=s
+          make target/install -j$(nproc) V=s
+          make json_overview_image_info -j$(nproc) V=s
+          make checksum -j$(nproc) V=s
+
+      - name: "15. 上传固件"
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.DEVICE_NAME }}-firmware
