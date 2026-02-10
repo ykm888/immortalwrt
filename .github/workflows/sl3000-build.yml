@@ -7,7 +7,6 @@ env:
   WORKDIR: openwrt
   DEVICE_NAME: sl3000-emmc
   CACHE_KEY: sl3000-factory-dl-v1
-  TZ: Asia/Shanghai
 
 jobs:
   build:
@@ -20,20 +19,35 @@ jobs:
       - name: "1. 代码检出"
         uses: actions/checkout@v4
 
-      - name: "2. 系统自愈：磁盘/swap/依赖"
+      - name: "2. 🔥 极限清理空间（彻底杜绝 No space left on device）"
         run: |
+          df -h
           sudo swapoff -a || true
           sudo rm -f /swapfile || true
-          sudo fallocate -l 12G /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
+          sudo rm -rf \
+            /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /usr/local/share/powershell /usr/share/swift /usr/local/.ghcup \
+            /var/lib/docker /opt/hostedtoolcache \
+            /usr/local/share/chromium /usr/share/gradle \
+            /usr/share/java /usr/share/maven /usr/share/php \
+            /usr/share/clang /usr/share/miniconda \
+            /usr/local/jvm /usr/local/lib/node_modules \
+            /home/linuxbrew /.dotnet /.rustup /.cargo 2>/dev/null || true
+          sudo docker system prune -a -f 2>/dev/null || true
+          df -h
+
+      - name: "3. 安装编译依赖"
+        run: |
           sudo apt-get update -qq
-          sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler bc libncurses5-dev libssl-dev pigz
+          sudo apt-get install -y build-essential flex bison gawk libncurses5-dev libssl-dev \
+            python3 device-tree-compiler pigz rsync unzip wget curl
         continue-on-error: true
 
-      - name: "3. 源码自愈：克隆"
+      - name: "4. 克隆 ImmortalWrt 源码"
         run: |
           [ -d "${{ env.WORKDIR }}" ] || git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git ${{ env.WORKDIR }}
 
-      - name: "4. 缓存自愈：恢复下载包"
+      - name: "5. 🛡️ 恢复下载包缓存（仅dl，稳定不爆盘）"
         uses: actions/cache/restore@v4
         with:
           path: ${{ env.WORKDIR }}/dl
@@ -41,19 +55,19 @@ jobs:
           restore-keys: ${{ runner.os }}-sl3000-dl-
         continue-on-error: true
 
-      - name: "5. 工厂自愈脚本：全量修复"
+      - name: "6. 🏭 执行工厂级自愈脚本"
         run: |
           chmod +x scripts/sl3000-patch.sh
           ./scripts/sl3000-patch.sh
 
-      - name: "6. 工具链自愈：编译宿主工具"
+      - name: "7. 🛠️ 编译工具链（host→opkg→cross）"
         working-directory: ${{ github.workspace }}/${{ env.WORKDIR }}
         run: |
           make tools/install -j$(nproc) || make tools/install -j1 V=s
           make package/opkg/host/compile -j1 V=s || true
           make toolchain/install -j$(nproc) || make toolchain/install -j1 V=s
 
-      - name: "7. DTS 自愈：强注入内核"
+      - name: "8. 🔥 DTS 自动注入内核编译列表"
         working-directory: ${{ github.workspace }}/${{ env.WORKDIR }}
         run: |
           make target/linux/prepare -j$(nproc) || true
@@ -65,16 +79,22 @@ jobs:
               echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$DTS_DEST/Makefile"
           fi
 
-      - name: "8. 编译自愈：阶梯式构建"
+      - name: "9. 🧹 编译前二次空间清理"
+        working-directory: ${{ github.workspace }}/${{ env.WORKDIR }}
+        run: |
+          sudo rm -rf /tmp/* /var/tmp/* 2>/dev/null || true
+          df -h
+
+      - name: "10. ⚙️ 阶梯式编译（永不中断）"
         working-directory: ${{ github.workspace }}/${{ env.WORKDIR }}
         run: |
           make target/linux/compile -j$(nproc) || make target/linux/compile -j1 V=s
           make package/compile -j$(nproc) || make package/compile -j1 V=s
-          make package/index -j1 V=s || echo "✅ 索引签名失败，已自动忽略"
+          make package/index -j1 V=s || echo "✅ 索引签名忽略，继续编译"
           make package/install -j$(nproc) || make package/install -j1 V=s
           make target/install -j$(nproc) || make target/install -j1 V=s
 
-      - name: "9. 固件打捞：提取有效固件"
+      - name: "11. 📦 打捞有效固件（过滤空包）"
         if: always()
         working-directory: ${{ github.workspace }}/${{ env.WORKDIR }}
         run: |
@@ -82,7 +102,7 @@ jobs:
           find bin/targets -type f -size +10M -name "*sysupgrade.bin" | xargs -r cp -t ../release_bins/
           ls -lh ../release_bins/
 
-      - name: "10. 自动发布 Release"
+      - name: "12. 🚀 自动发布 Release"
         uses: softprops/action-gh-release@v2
         if: always()
         with:
@@ -90,7 +110,7 @@ jobs:
           files: release_bins/*
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: "11. 缓存封印：保存下载包"
+      - name: "13. 💾 保存下载包缓存（工厂标准）"
         uses: actions/cache/save@v4
         if: success()
         with:
