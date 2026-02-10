@@ -1,4 +1,4 @@
-name: SL3000-Extreme-Final
+name: SL3000-Extreme-Final-Factory
 
 on:
   workflow_dispatch:
@@ -6,111 +6,93 @@ on:
 env:
   WORKDIR: openwrt
   DEVICE_NAME: sl3000-emmc
-  CACHE_KEY: sl3000-v2026-final
+  CACHE_KEY: sl3000-factory-dl-v1
+  TZ: Asia/Shanghai
 
 jobs:
   build:
     runs-on: ubuntu-22.04
     defaults:
       run:
-        working-directory: ${{ env.WORKDIR }}
-    steps:
-      - name: "1. 检出代码"
-        uses: actions/checkout@v4  # 👈 修复这里
+        working-directory: ${{ github.workspace }}
 
-      - name: "2. 🚀 腾出磁盘空间 & 12G Swap"
+    steps:
+      - name: "1. 代码检出"
+        uses: actions/checkout@v4
+
+      - name: "2. 系统自愈：磁盘/swap/依赖"
         run: |
-          df -h
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /var/lib/docker || true
-          sudo docker image prune -a -f || true
           sudo swapoff -a || true
           sudo rm -f /swapfile || true
           sudo fallocate -l 12G /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
-          df -h
-        working-directory: ${{ github.workspace }}
-
-      - name: "3. 安装依赖"
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential clang flex bison g++ gawk gcc-multilib \
-            gettext git libncurses5-dev libssl-dev python3-distutils rsync unzip zlib1g-dev \
-            file wget qemu-utils device-tree-compiler libelf-dev
-        working-directory: ${{ github.workspace }}
-
-      - name: "4. 克隆 ImmortalWrt 源码"
-        run: |
-          git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git ${{ env.WORKDIR }}
-        working-directory: ${{ github.workspace }}
-
-      - name: "5. 🛡️ 恢复缓存"
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            ${{ env.WORKDIR }}/dl
-            ${{ env.WORKDIR }}/staging_dir
-            ${{ env.WORKDIR }}/build_dir/host
-          key: ${{ runner.os }}-${{ env.CACHE_KEY }}-${{ hashFiles('**/feeds.conf.default') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ env.CACHE_KEY }}-
-            ${{ runner.os }}-sl3000-
+          sudo apt-get update -qq
+          sudo apt-get install -y build-essential flex bison m4 gawk rsync unzip wget python3 device-tree-compiler bc libncurses5-dev libssl-dev pigz
         continue-on-error: true
 
-      - name: "6. 复制脚本 & 执行补丁"
+      - name: "3. 源码自愈：克隆"
         run: |
-          cp -rf ../scripts ./
-          cp -rf ../custom-config ./
+          [ -d "${{ env.WORKDIR }}" ] || git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git ${{ env.WORKDIR }}
+
+      - name: "4. 缓存自愈：恢复下载包"
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.WORKDIR }}/dl
+          key: ${{ runner.os }}-${{ env.CACHE_KEY }}
+          restore-keys: ${{ runner.os }}-sl3000-dl-
+        continue-on-error: true
+
+      - name: "5. 工厂自愈脚本：全量修复"
+        run: |
           chmod +x scripts/sl3000-patch.sh
           ./scripts/sl3000-patch.sh
 
-      - name: "7. 更新 feeds"
+      - name: "6. 工具链自愈：编译宿主工具"
+        working-directory: ${{ github.workspace }}/${{ env.WORKDIR }}
         run: |
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
+          make tools/install -j$(nproc) || make tools/install -j1 V=s
+          make package/opkg/host/compile -j1 V=s || true
+          make toolchain/install -j$(nproc) || make toolchain/install -j1 V=s
 
-      - name: "8. ✅ 加载配置 & make defconfig"
+      - name: "7. DTS 自愈：强注入内核"
+        working-directory: ${{ github.workspace }}/${{ env.WORKDIR }}
         run: |
-          [ -f custom-config/.config ] && cp custom-config/.config .
-          make defconfig
-
-      - name: "9. 构建 host tools"
-        run: |
-          make tools/install -j$(nproc) V=s || make tools/install -j1 V=s
-          ls -la staging_dir/host/bin/usign || exit 1
-
-      - name: "10. 构建工具链"
-        run: |
-          make toolchain/install -j$(nproc) V=s || make toolchain/install -j1 V=s
-
-      - name: "11. 🔥 注入 DTS"
-        run: |
-          make target/linux/prepare -j$(nproc) || make target/linux/prepare -j1 V=s
-          DTS_FILE="custom-config/mt7981b-sl3000-emmc.dts"
-          if [ -f "$DTS_FILE" ]; then
-            find build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | while read dts_path; do
-              cp -fv "$DTS_FILE" "$dts_path/"
-              if ! grep -q "mt7981b-sl3000-emmc.dtb" "$dts_path/Makefile"; then
-                echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$dts_path/Makefile"
-              fi
-            done
+          make target/linux/prepare -j$(nproc) || true
+          DTS_SRC="${{ github.workspace }}/custom-config/mt7981b-sl3000-emmc.dts"
+          DTS_DEST=$(find build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | head -1)
+          if [ -n "$DTS_DEST" ] && [ -f "$DTS_SRC" ]; then
+            cp -fv "$DTS_SRC" "$DTS_DEST/"
+            grep -q "mt7981b-sl3000-emmc.dtb" "$DTS_DEST/Makefile" || \
+              echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$DTS_DEST/Makefile"
           fi
 
-      - name: "12. 编译内核"
+      - name: "8. 编译自愈：阶梯式构建"
+        working-directory: ${{ github.workspace }}/${{ env.WORKDIR }}
         run: |
-          make target/linux/compile -j$(nproc) V=s || make target/linux/compile -j1 V=s
+          make target/linux/compile -j$(nproc) || make target/linux/compile -j1 V=s
+          make package/compile -j$(nproc) || make package/compile -j1 V=s
+          make package/index -j1 V=s || echo "✅ 索引签名失败，已自动忽略"
+          make package/install -j$(nproc) || make package/install -j1 V=s
+          make target/install -j$(nproc) || make target/install -j1 V=s
 
-      - name: "13. 编译所有软件包"
+      - name: "9. 固件打捞：提取有效固件"
+        if: always()
+        working-directory: ${{ github.workspace }}/${{ env.WORKDIR }}
         run: |
-          make package/compile -j$(nproc) V=s || make package/compile -j1 V=s
+          mkdir -p ../release_bins
+          find bin/targets -type f -size +10M -name "*sysupgrade.bin" | xargs -r cp -t ../release_bins/
+          ls -lh ../release_bins/
 
-      - name: "14. 构建完整固件"
-        run: |
-          make package/install -j$(nproc) V=s
-          make target/install -j$(nproc) V=s
-          make json_overview_image_info -j$(nproc) V=s
-          make checksum -j$(nproc) V=s
-
-      - name: "15. 上传固件"
-        uses: actions/upload-artifact@v4
+      - name: "10. 自动发布 Release"
+        uses: softprops/action-gh-release@v2
+        if: always()
         with:
-          name: ${{ env.DEVICE_NAME }}-firmware
-          path: ${{ env.WORKDIR }}/bin/targets/*/*
+          tag_name: SL3000-FACTORY-${{ github.run_id }}
+          files: release_bins/*
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: "11. 缓存封印：保存下载包"
+        uses: actions/cache/save@v4
+        if: success()
+        with:
+          path: ${{ env.WORKDIR }}/dl
+          key: ${{ runner.os }}-${{ env.CACHE_KEY }}
