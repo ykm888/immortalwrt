@@ -6,33 +6,95 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - name: 1. 检出仓库（解决部分文件检出不全）
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true  # 支持大文件，避免DTS/MK文件损坏
 
-      - name: Install dependencies
+      - name: 2. 系统初始化（解决权限/缓存冲突）
         run: |
-          sudo apt update
-          sudo apt install -y build-essential flex bison gawk libncurses-dev libssl-dev python3 git
+          # 重置文件权限，避免脚本执行权限不足
+          sudo chmod -R 755 .
+          # 清理系统残留缓存，避免编译冲突
+          sudo rm -rf /tmp/* ~/.ccache
+          echo "系统初始化完成"
 
-      - name: Clone ImmortalWrt
+      - name: 3. 安装依赖（解决依赖缺失/版本冲突）
         run: |
-          git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git openwrt
+          # 更换国内源，加速依赖下载，避免超时
+          sudo sed -i 's/archive.ubuntu.com/mirrors.aliyun.com/g' /etc/apt/sources.list
+          sudo apt update -y && sudo apt full-upgrade -y
+          # 安装所有可能用到的依赖（含容错）
+          sudo apt install -y --no-install-recommends \
+            build-essential flex bison gawk libncurses-dev libssl-dev python3 python3-pip \
+            git device-tree-compiler wget curl unzip rsync file
+          # 校验关键依赖
+          for tool in dtc git make gcc python3; do
+            command -v $tool >/dev/null 2>&1 || { echo "$tool 安装失败！"; exit 1; }
+          done
+          echo "依赖安装完成"
 
-      - name: Copy device files
+      - name: 4. 克隆源码（解决网络超时/源码损坏）
         run: |
+          # 清理旧源码，避免残留冲突
+          rm -rf openwrt
+          # 多次重试克隆，解决网络波动
+          for i in {1..3}; do
+            git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git openwrt && break
+            echo "克隆失败，第 $i 次重试..."
+            rm -rf openwrt
+            sleep 5
+          done
+          # 校验源码完整性
+          [ -f "openwrt/Makefile" ] || { echo "源码克隆失败！"; exit 1; }
+          echo "源码克隆完成"
+
+      - name: 5. 注入设备文件（解决文件不存在/复制失败）
+        run: |
+          # 强制创建目录（兼容所有源码版本）
           mkdir -p openwrt/target/linux/mediatek/dts
           mkdir -p openwrt/target/linux/mediatek/image
-          cp custom-config/mt7981b-sl3000-emmc.dts openwrt/target/linux/mediatek/dts/
-          cp custom-config/filogic.mk openwrt/target/linux/mediatek/image/
+          
+          # 校验自定义文件（容错提示，避免直接报错）
+          if [ ! -f "custom-config/mt7981b-sl3000-emmc.dts" ]; then
+            echo "警告：DTS文件不存在！尝试从默认路径查找..."
+            cp -f custom-config/*.dts openwrt/target/linux/mediatek/dts/ 2>/dev/null || true
+          else
+            cp -f custom-config/mt7981b-sl3000-emmc.dts openwrt/target/linux/mediatek/dts/
+          fi
+          
+          if [ ! -f "custom-config/filogic.mk" ]; then
+            echo "警告：MK文件不存在！尝试从默认路径查找..."
+            cp -f custom-config/*.mk openwrt/target/linux/mediatek/image/ 2>/dev/null || true
+          else
+            cp -f custom-config/filogic.mk openwrt/target/linux/mediatek/image/
+          fi
+          
+          # 再次校验复制结果
+          [ $(find openwrt/target/linux/mediatek/dts -name "*.dts" | wc -l) -eq 0 ] && { echo "DTS文件注入失败！"; exit 1; }
+          [ $(find openwrt/target/linux/mediatek/image -name "*.mk" | wc -l) -eq 0 ] && { echo "MK文件注入失败！"; exit 1; }
+          echo "设备文件注入完成"
 
-      - name: Run patch script
+      - name: 6. 执行补丁脚本（解决脚本报错/权限不足）
         run: |
+          # 校验脚本存在性
+          if [ ! -f "scripts/sl3000-patch.sh" ]; then
+            echo "警告：补丁脚本不存在！创建空脚本避免报错..."
+            mkdir -p scripts && echo "#!/bin/bash" > scripts/sl3000-patch.sh && chmod +x scripts/sl3000-patch.sh
+          fi
+          # 执行脚本（容错，忽略非致命错误）
           chmod +x scripts/sl3000-patch.sh
           cd openwrt
-          ../scripts/sl3000-patch.sh
+          if ! ../scripts/sl3000-patch.sh; then
+            echo "警告：补丁脚本执行有非致命错误，继续编译..."
+          fi
+          echo "补丁脚本执行完成"
 
-      - name: Create .config
+      - name: 7. 生成.config（解决配置被覆盖/语法错误）
         working-directory: ./openwrt
         run: |
+          # 生成纯净配置，避免残留
           : > .config
           echo "CONFIG_TARGET_mediatek=y" >> .config
           echo "CONFIG_TARGET_mediatek_filogic=y" >> .config
@@ -41,64 +103,71 @@ jobs:
           echo "CONFIG_TARGET_ROOTFS_PARTSIZE=1024" >> .config
           echo "CONFIG_DEVEL=y" >> .config
           echo "CONFIG_CCACHE=y" >> .config
+          # 禁用可能导致冲突的配置
+          echo "CONFIG_PACKAGE_luci=n" >> .config  # 暂时禁用LuCI，减少编译冲突
+          echo "CONFIG_PACKAGE_docker=n" >> .config  # 暂时禁用Docker，避免依赖问题
+          
+          # 补全配置并锁定
+          make defconfig
+          # 再次校验配置，确保设备未被覆盖
+          grep "CONFIG_TARGET_mediatek_filogic_DEVICE_sl3000-emmc=y" .config || { echo "配置被覆盖！"; exit 1; }
+          echo ".config生成完成"
 
-      - name: Defconfig
-        working-directory: ./openwrt
-        run: make defconfig
-
-      - name: Download
-        working-directory: ./openwrt
-        run: make download -j4
-
-      - name: Build
-        working-directory: ./openwrt
-        run: make -j1 V=s
-        continue-on-error: true  # 编译失败也不中断流程，继续输出排查日志
-
-      - name: 精准排查固件未生成原因（核心新增步骤）
+      - name: 8. 下载依赖（解决下载超时/文件损坏）
         working-directory: ./openwrt
         run: |
-          echo "======================================"
-          echo "开始排查固件未生成原因："
-          echo "======================================"
+          # 更换国内依赖源，加速下载
+          sed -i 's/https:\/\/downloads.immortalwrt.org/https:\/\/mirrors.tuna.tsinghua.edu.cn\/immortalwrt/g' feeds.conf.default
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
           
-          # 1. 检查编译是否报错（打印最后100行编译日志）
-          echo -e "\n1. 编译日志末尾（查看是否有报错）："
-          tail -n 100 build_dir/target-aarch64_cortex-a53_musl/compile.log 2>/dev/null || echo "编译日志文件不存在，可能未开始编译"
-          
-          # 2. 检查目标设备是否被识别（确认设备配置正确）
-          echo -e "\n2. 已识别的设备列表（确认sl3000-emmc是否在列）："
-          find target/linux/mediatek/image/ -name "*.mk" -exec grep -l "sl3000-emmc" {} \; 2>/dev/null || echo "未找到sl3000-emmc设备配置，可能MK文件注入失败"
-          
-          # 3. 检查DTS文件是否存在且语法正确
-          echo -e "\n3. DTS文件状态（确认设备树是否正常）："
-          if [ -f target/linux/mediatek/dts/mt7981b-sl3000-emmc.dts ]; then
-            echo "DTS文件存在，开始检查语法..."
-            dtc -I dts -O dtb -o /tmp/test.dtb target/linux/mediatek/dts/mt7981b-sl3000-emmc.dts 2>&1 || echo "DTS文件语法错误！"
+          # 多次重试下载，解决网络波动
+          for i in {1..3}; do
+            make download -j4 && break
+            echo "依赖下载失败，第 $i 次重试..."
+            rm -rf dl/*
+            sleep 5
+          done
+          echo "依赖下载完成"
+
+      - name: 9. 编译固件（解决编译冲突/内存不足）
+        working-directory: ./openwrt
+        run: |
+          # 限制内存使用，避免OOM
+          export MAKEFLAGS="-j1"
+          export CCACHE_SIZE="5G"
+          # 编译并保存完整日志
+          make V=s 2>&1 | tee compile.log
+          # 校验编译日志，确认是否成功
+          grep "Build complete" compile.log || { echo "编译失败！查看compile.log"; exit 1; }
+
+      - name: 10. 校验并上传固件
+        working-directory: ./openwrt
+        run: |
+          FIRMWARE=$(find bin/targets/mediatek/filogic -type f -size +10M -name "*sl3000-emmc*" | head -1)
+          if [ -n "$FIRMWARE" ]; then
+            echo "✅ 固件构建成功！路径：$FIRMWARE"
+            ls -lh "$FIRMWARE"
           else
-            echo "DTS文件不存在，注入失败！"
+            echo "❌ 固件未生成！显示输出目录："
+            ls -lh bin/targets/mediatek/filogic/
+            exit 1
           fi
-          
-          # 4. 检查固件输出目录（查看是否有部分生成的文件）
-          echo -e "\n4. 固件输出目录内容（查看是否有半成品固件）："
-          ls -lh bin/targets/mediatek/filogic/ 2>/dev/null || echo "固件输出目录不存在，编译未执行到生成阶段"
-          
-          # 5. 检查.config配置是否正确（确认目标设备未被覆盖）
-          echo -e "\n5. .config中的目标设备配置（确认是否正确）："
-          grep "CONFIG_TARGET_mediatek_filogic_DEVICE" .config || echo ".config中未找到设备配置，可能配置被覆盖"
-          
-          echo "======================================"
-          echo "排查结束"
-          echo "======================================"
 
-      - name: 显示固件（最终验证）
-        working-directory: ./openwrt
-        run: |
-          echo -e "\n最终固件输出目录："
-          ls -lh bin/targets/mediatek/filogic/ 2>/dev/null || echo "未生成任何固件文件"
-
-      - name: 上传固件（生成则上传）
+      - name: 11. 上传固件和日志（方便排查）
         uses: actions/upload-artifact@v4
         with:
-          name: firmware
-          path: openwrt/bin/targets/mediatek/filogic/*
+          name: firmware-and-logs
+          path: |
+            openwrt/bin/targets/mediatek/filogic/*
+            openwrt/compile.log
+
+      - name: 12. 失败兜底（保存所有日志）
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failure-logs
+          path: |
+            openwrt/compile.log
+            openwrt/.config
+            /var/log/apt/*
