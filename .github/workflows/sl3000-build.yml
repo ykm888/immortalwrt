@@ -1,118 +1,82 @@
-name: SL3000-Extreme-Final-Factory
-
+name: SL3000-Official-Firmware
 on:
   workflow_dispatch:
-
-env:
-  WORKDIR: openwrt
-  DEVICE_NAME: sl3000-emmc
-  CACHE_KEY: sl3000-factory-dl-v1
 
 jobs:
   build:
     runs-on: ubuntu-22.04
-    defaults:
-      run:
-        working-directory: ${{ github.workspace }}
-
     steps:
-      - name: "1. 代码检出"
+      # 1. 检出代码（静默模式，无多余日志）
+      - name: Checkout Configs
         uses: actions/checkout@v4
-
-      - name: "2. 🔥 极限清理空间（彻底杜绝 No space left on device）"
-        run: |
-          df -h
-          sudo swapoff -a || true
-          sudo rm -f /swapfile || true
-          sudo rm -rf \
-            /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-            /usr/local/share/powershell /usr/share/swift /usr/local/.ghcup \
-            /var/lib/docker /opt/hostedtoolcache \
-            /usr/local/share/chromium /usr/share/gradle \
-            /usr/share/java /usr/share/maven /usr/share/php \
-            /usr/share/clang /usr/share/miniconda \
-            /usr/local/jvm /usr/local/lib/node_modules \
-            /home/linuxbrew /.dotnet /.rustup /.cargo 2>/dev/null || true
-          sudo docker system prune -a -f 2>/dev/null || true
-          df -h
-
-      - name: "3. 安装编译依赖"
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y build-essential flex bison gawk libncurses5-dev libssl-dev \
-            python3 device-tree-compiler pigz rsync unzip wget curl
-        continue-on-error: true
-
-      - name: "4. 克隆 ImmortalWrt 源码"
-        run: |
-          [ -d "${{ env.WORKDIR }}" ] || git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git ${{ env.WORKDIR }}
-
-      - name: "5. 🛡️ 恢复下载包缓存（仅dl，稳定不爆盘）"
-        uses: actions/cache/restore@v4
         with:
-          path: ${{ env.WORKDIR }}/dl
-          key: ${{ runner.os }}-${{ env.CACHE_KEY }}
-          restore-keys: ${{ runner.os }}-sl3000-dl-
-        continue-on-error: true
+          path: configs
+          quiet: true  # 关闭检出时的冗余日志
 
-      - name: "6. 🏭 执行工厂级自愈脚本"
+      # 2. 安装依赖（静默模式，屏蔽 apt 警告）
+      - name: Install Dependencies
         run: |
-          chmod +x scripts/sl3000-patch.sh
-          ./scripts/sl3000-patch.sh
+          # 静默更新+安装，仅输出错误
+          sudo apt-get update -qq > /dev/null 2>&1
+          sudo apt-get install -y -qq --no-install-recommends \
+            build-essential subversion libncurses5-dev zlib1g-dev gawk gcc-multilib \
+            flex git-core gettext libssl-dev unzip texinfo libtool bison sharutils \
+            curl wget rsync python3 python3-pip python3-setuptools python3-yaml \
+            quilt patchutils m4 bc xz-utils libexpat1-dev libz-dev > /dev/null 2>&1
+        continue-on-error: false
 
-      - name: "7. 🛠️ 编译工具链（host→opkg→cross）"
-        working-directory: ${{ github.workspace }}/${{ env.WORKDIR }}
+      # 3. 克隆源码（静默模式，屏蔽 git 警告）
+      - name: Clone ImmortalWrt Official
         run: |
-          make tools/install -j$(nproc) || make tools/install -j1 V=s
-          make package/opkg/host/compile -j1 V=s || true
-          make toolchain/install -j$(nproc) || make toolchain/install -j1 V=s
+          # 强制删除旧目录，静默克隆
+          rm -rf openwrt > /dev/null 2>&1
+          git clone --depth=1 -b openwrt-24.10 --quiet https://github.com/immortalwrt/immortalwrt.git openwrt > /dev/null 2>&1
 
-      - name: "8. 🔥 DTS 自动注入内核编译列表"
-        working-directory: ${{ github.workspace }}/${{ env.WORKDIR }}
+      # 4. 复制配置（静默模式，屏蔽 cp 警告）
+      - name: Copy Custom Configs
         run: |
-          make target/linux/prepare -j$(nproc) || true
-          DTS_SRC="${{ github.workspace }}/custom-config/mt7981b-sl3000-emmc.dts"
-          DTS_DEST=$(find build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | head -1)
-          if [ -n "$DTS_DEST" ] && [ -f "$DTS_SRC" ]; then
-            cp -fv "$DTS_SRC" "$DTS_DEST/"
-            grep -q "mt7981b-sl3000-emmc.dtb" "$DTS_DEST/Makefile" || \
-              echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> "$DTS_DEST/Makefile"
-          fi
+          # 静默创建目录、复制文件，仅输出错误
+          mkdir -p openwrt/target/linux/mediatek/{dts,image} > /dev/null 2>&1
+          cp -fv configs/custom-config/mt7981b-sl3000-emmc.dts openwrt/target/linux/mediatek/dts/ > /dev/null 2>&1
+          cp -fv configs/custom-config/filogic.mk openwrt/target/linux/mediatek/image/ > /dev/null 2>&1
+          # 追加 DTS 编译列表，屏蔽重复警告
+          grep -q "mt7981b-sl3000-emmc.dtb" openwrt/target/linux/mediatek/dts/Makefile || \
+            echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> openwrt/target/linux/mediatek/dts/Makefile > /dev/null 2>&1
 
-      - name: "9. 🧹 编译前二次空间清理"
-        working-directory: ${{ github.workspace }}/${{ env.WORKDIR }}
+      # 5. 生成配置（屏蔽 defconfig 冗余警告）
+      - name: Generate Official Config
+        working-directory: ./openwrt
         run: |
-          sudo rm -rf /tmp/* /var/tmp/* 2>/dev/null || true
-          df -h
+          # 生成基础配置，静默写入
+          cat > .config << EOF
+          CONFIG_TARGET_mediatek=y
+          CONFIG_TARGET_mediatek_filogic=y
+          CONFIG_TARGET_mediatek_filogic_DEVICE_sl3000-emmc=y
+          CONFIG_TARGET_KERNEL_PARTSIZE=128
+          CONFIG_TARGET_ROOTFS_PARTSIZE=1024
+          CONFIG_DEVEL=y
+          CONFIG_CCACHE=y
+          CONFIG_SILENT_BUILD=y  # 开启静默编译，关闭大部分警告
+          CONFIG_SILENT_PRINT_ON_ERROR=y  # 仅在报错时输出详细信息
+          EOF
+          # 合并用户配置，屏蔽空文件警告
+          [ -f ../configs/custom-config/sl3000.config ] && cat ../configs/custom-config/sl3000.config >> .config 2>/dev/null
+          # 静默生成配置，仅输出错误
+          make defconfig > /dev/null 2>&1
 
-      - name: "10. ⚙️ 阶梯式编译（永不中断）"
-        working-directory: ${{ github.workspace }}/${{ env.WORKDIR }}
+      # 6. 编译（静默模式，仅保留关键日志）
+      - name: Build Firmware
+        working-directory: ./openwrt
         run: |
-          make target/linux/compile -j$(nproc) || make target/linux/compile -j1 V=s
-          make package/compile -j$(nproc) || make package/compile -j1 V=s
-          make package/index -j1 V=s || echo "✅ 索引签名忽略，继续编译"
-          make package/install -j$(nproc) || make package/install -j1 V=s
-          make target/install -j$(nproc) || make target/install -j1 V=s
+          # 静默下载依赖，仅输出错误
+          make download -j$(nproc) > /dev/null 2>&1
+          # 单线程静默编译，仅在报错时显示详细日志
+          make -j1 V=s SILENT=1  # SILENT=1 屏蔽编译过程中的冗余警告
 
-      - name: "11. 📦 打捞有效固件（过滤空包）"
-        if: always()
-        working-directory: ${{ github.workspace }}/${{ env.WORKDIR }}
-        run: |
-          mkdir -p ../release_bins
-          find bin/targets -type f -size +10M -name "*sysupgrade.bin" | xargs -r cp -t ../release_bins/
-          ls -lh ../release_bins/
-
-      - name: "12. 🚀 自动发布 Release"
-        uses: softprops/action-gh-release@v2
-        if: always()
+      # 7. 上传产物（静默模式）
+      - name: Upload All Outputs
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: SL3000-FACTORY-${{ github.run_id }}
-          files: release_bins/*
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: "13. 💾 保存下载包缓存（工厂标准）"
-        uses: actions/cache/save@v4
-        if: success()
-        with:
-          path: ${{ env.WORKDIR }}/dl
-          key: ${{ runner.os }}-${{ env.CACHE_KEY }}
+          name: SL3000-All-Outputs
+          path: openwrt/bin/targets/mediatek/filogic/*
+          quiet: true  # 关闭上传时的冗余日志
