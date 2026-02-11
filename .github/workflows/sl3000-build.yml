@@ -1,67 +1,55 @@
-name: SL3000-100%-SUCCESS
+name: SL3000-FINAL-TOOLCHAIN+FIRMWARE
 on:
   workflow_dispatch:
 
 jobs:
-  build:
+  # ========== 1. 只构建工具链（单独、缓存、只编一次） ==========
+  build-toolchain:
     runs-on: ubuntu-22.04
-    defaults:
-      run:
-        working-directory: ${{ github.workspace }}
-
+    outputs:
+      cache_key: ${{ steps.cache_key.outputs.cache_key }}
     steps:
-      # ====================== 1. 检出代码（绝对安全） ======================
-      - name: 1. Checkout
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          quiet: true
+        with: { quiet: true }
 
-      # ====================== 2. 磁盘空间清理（绝对安全、绝不报错） ======================
-      - name: 2. Disk Clean (Safe)
+      - name: Disk Clean
         run: |
           df -h
-          sudo swapoff -a || true
+          sudo swapoff -a 2>/dev/null || true
           sudo rm -rf /swapfile /usr/share/dotnet /usr/local/lib/android /opt/ghc /var/lib/docker /opt/hostedtoolcache /tmp/* /var/tmp/* 2>/dev/null || true
-          sudo apt-get autoremove -y --purge >/dev/null 2>&1 || true
-          sudo apt-get clean >/dev/null 2>&1 || true
-          sudo rm -rf /var/lib/apt/lists/* >/dev/null 2>&1 || true
+          sudo apt-get autoremove -y --purge >/dev/null 2>&1
+          sudo apt-get clean >/dev/null 2>&1
+          sudo rm -rf /var/lib/apt/lists/*
           df -h
 
-      # ====================== 3. 安装依赖（绝对完整、绝不缺） ======================
-      - name: 3. Install Deps
+      - name: Install Dependencies
         run: |
-          sudo apt-get update -qq >/dev/null 2>&1
-          sudo apt-get install -y -qq --no-install-recommends \
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
             build-essential flex bison gawk m4 bc libncurses5-dev libssl-dev \
             python3 device-tree-compiler pigz rsync unzip wget curl git subversion \
             libz-dev libexpat1-dev texinfo libtool python3-pip python3-yaml quilt patchutils xz-utils
-          sudo apt-get clean >/dev/null 2>&1
 
-      # ====================== 4. 克隆源码（绝对干净） ======================
-      - name: 4. Clone ImmortalWrt 24.10
+      - name: Clone ImmortalWrt 24.10
         run: |
           rm -rf openwrt
           git clone --depth=1 -b openwrt-24.10 --quiet https://github.com/immortalwrt/immortalwrt.git openwrt
-          [ -d "openwrt" ] || exit 1
 
-      # ====================== 5. 复制设备配置（你的原路径、绝不乱改） ======================
-      - name: 5. Copy Configs
+      - name: Copy Custom Configs
         run: |
-          mkdir -p openwrt/target/linux/mediatek/{dts,image} 2>/dev/null || true
-          cp -f custom-config/mt7981b-sl3000-emmc.dts openwrt/target/linux/mediatek/dts/ 2>/dev/null || true
-          cp -f custom-config/filogic.mk openwrt/target/linux/mediatek/image/ 2>/dev/null || true
-          grep -q "mt7981b-sl3000-emmc.dtb" openwrt/target/linux/mediatek/dts/Makefile 2>/dev/null || \
-            echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> openwrt/target/linux/mediatek/dts/Makefile 2>/dev/null || true
+          mkdir -p openwrt/target/linux/mediatek/{dts,image}
+          cp -f custom-config/mt7981b-sl3000-emmc.dts openwrt/target/linux/mediatek/dts/
+          cp -f custom-config/filogic.mk openwrt/target/linux/mediatek/image/
+          grep -q "mt7981b-sl3000-emmc.dtb" openwrt/target/linux/mediatek/dts/Makefile || \
+            echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> openwrt/target/linux/mediatek/dts/Makefile
 
-      # ====================== 6. 执行你的脚本（原路径、全容错、绝不闪退） ======================
-      - name: 6. Run sl3000-patch.sh
+      - name: Run sl3000-patch.sh
         run: |
-          chmod +x scripts/sl3000-patch.sh 2>/dev/null || true
-          cd openwrt
-          ../scripts/sl3000-patch.sh || true
+          chmod +x scripts/sl3000-patch.sh
+          cd openwrt && ../scripts/sl3000-patch.sh || true
 
-      # ====================== 7. 生成 .config（无EOF、纯echo、绝对正确） ======================
-      - name: 7. Generate Config
+      - name: Generate .config
         working-directory: ./openwrt
         run: |
           : > .config
@@ -74,46 +62,123 @@ jobs:
           echo "CONFIG_CCACHE=y" >> .config
           [ -f ../custom-config/sl3000.config ] && cat ../custom-config/sl3000.config >> .config
           make defconfig >/dev/null 2>&1 || true
-          sed -i 's/CONFIG_TARGET_KERNEL_PARTSIZE=.*/CONFIG_TARGET_KERNEL_PARTSIZE=128/' .config 2>/dev/null || true
-          sed -i 's/CONFIG_TARGET_ROOTFS_PARTSIZE=.*/CONFIG_TARGET_ROOTFS_PARTSIZE=1024/' .config 2>/dev/null || true
 
-      # ====================== 8. 下载依赖（防止编译中断） ======================
-      - name: 8. Download Packages
+      - name: Generate Cache Key
+        id: cache_key
+        working-directory: ./openwrt
+        run: echo "cache_key=sl3000-tc-$(sha256sum .config | head -c16)" >> $GITHUB_OUTPUT
+
+      - name: Cache Toolchain
+        uses: actions/cache@v4
+        with:
+          path: |
+            openwrt/staging_dir
+            openwrt/build_dir/toolchain-*
+            openwrt/dl
+          key: ${{ steps.cache_key.outputs.cache_key }}
+
+      - name: Build Only Toolchain
         working-directory: ./openwrt
         run: |
-          make download -j$(nproc) >/dev/null 2>&1 || true
+          make download -j$(nproc) >/dev/null 2>&1
+          make tools/install -j1 V=s
+          make toolchain/install -j1 V=s
 
-      # ====================== 9. 编译（最稳定单线程、全流程、绝不乱报错） ======================
-      - name: 9. Full Build
+  # ========== 2. 只构建固件（用缓存工具链，稳定不崩） ==========
+  build-firmware:
+    runs-on: ubuntu-22.04
+    needs: build-toolchain
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with: { quiet: true }
+
+      - name: Disk Clean
+        run: |
+          df -h
+          sudo swapoff -a 2>/dev/null || true
+          sudo rm -rf /swapfile /usr/share/dotnet /usr/local/lib/android /opt/ghc /var/lib/docker /opt/hostedtoolcache /tmp/* /var/tmp/* 2>/dev/null || true
+          sudo apt-get autoremove -y --purge >/dev/null 2>&1
+          sudo apt-get clean >/dev/null 2>&1
+          sudo rm -rf /var/lib/apt/lists/*
+          df -h
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential flex bison gawk m4 bc libncurses5-dev libssl-dev \
+            python3 device-tree-compiler pigz rsync unzip wget curl git subversion \
+            libz-dev libexpat1-dev texinfo libtool python3-pip python3-yaml quilt patchutils xz-utils
+
+      - name: Clone ImmortalWrt 24.10
+        run: |
+          rm -rf openwrt
+          git clone --depth=1 -b openwrt-24.10 --quiet https://github.com/immortalwrt/immortalwrt.git openwrt
+
+      - name: Restore Toolchain Cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            openwrt/staging_dir
+            openwrt/build_dir/toolchain-*
+            openwrt/dl
+          key: ${{ needs.build-toolchain.outputs.cache_key }}
+
+      - name: Copy Custom Configs
+        run: |
+          mkdir -p openwrt/target/linux/mediatek/{dts,image}
+          cp -f custom-config/mt7981b-sl3000-emmc.dts openwrt/target/linux/mediatek/dts/
+          cp -f custom-config/filogic.mk openwrt/target/linux/mediatek/image/
+          grep -q "mt7981b-sl3000-emmc.dtb" openwrt/target/linux/mediatek/dts/Makefile || \
+            echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> openwrt/target/linux/mediatek/dts/Makefile
+
+      - name: Run sl3000-patch.sh
+        run: |
+          chmod +x scripts/sl3000-patch.sh
+          cd openwrt && ../scripts/sl3000-patch.sh || true
+
+      - name: Generate .config
         working-directory: ./openwrt
         run: |
-          make tools/install -j1 V=s || true
-          make toolchain/install -j1 V=s || true
-          make target/linux/compile -j1 V=s || true
-          make package/compile -j1 V=s || true
-          make package/install -j1 V=s || true
-          make target/install -j1 V=s || true
-          make image/install -j1 V=s || true
+          : > .config
+          echo "CONFIG_TARGET_mediatek=y" >> .config
+          echo "CONFIG_TARGET_mediatek_filogic=y" >> .config
+          echo "CONFIG_TARGET_mediatek_filogic_DEVICE_sl3000-emmc=y" >> .config
+          echo "CONFIG_TARGET_KERNEL_PARTSIZE=128" >> .config
+          echo "CONFIG_TARGET_ROOTFS_PARTSIZE=1024" >> .config
+          echo "CONFIG_DEVEL=y" >> .config
+          echo "CONFIG_CCACHE=y" >> .config
+          [ -f ../custom-config/sl3000.config ] && cat ../custom-config/sl3000.config >> .config
+          make defconfig >/dev/null 2>&1 || true
 
-      # ====================== 10. 检查固件 + 自动打印原因 ======================
-      - name: 10. Check Firmware
+      - name: Build Only Firmware
         working-directory: ./openwrt
         run: |
-          FIRMWARE=$(find bin/targets/mediatek/filogic -type f -size +10M -name "*sl3000*" | head -1)
+          make target/linux/compile -j1 V=s
+          make package/compile -j1 V=s
+          make package/install -j1 V=s
+          make target/install -j1 V=s
+          make image/install -j1 V=s
+
+      - name: Check Firmware & Show Reason
+        working-directory: ./openwrt
+        run: |
+          FIRMWARE=$(find bin/targets/mediatek/filogic -type f -size +10M -name "*sl3000-emmc*" | head -1)
           if [ -n "$FIRMWARE" ]; then
-            echo "✅ 100% 构建成功！固件：$FIRMWARE"
-            ls -lh $FIRMWARE
+            echo "✅ 构建成功！固件：$FIRMWARE"
+            ls -lh "$FIRMWARE"
           else
-            echo "❌ 未生成固件（仅可能是你的 DTS/MK/config 语法错）"
+            echo -e "\n❌ 未生成固件，排查信息："
             echo "--- 固件目录 ---"
             ls -lh bin/targets/mediatek/filogic/ 2>/dev/null
-            echo "--- .config 关键配置 ---"
-            grep -E "TARGET_" .config 2>/dev/null
+            echo "--- 设备配置 ---"
+            ls -lh target/linux/mediatek/dts/mt7981b-sl3000-emmc.dts 2>/dev/null
+            ls -lh target/linux/mediatek/image/filogic.mk 2>/dev/null
             exit 1
           fi
 
-      # ====================== 11. 上传 ======================
-      - name: 11. Upload
+      - name: Upload Firmware
         uses: actions/upload-artifact@v4
         with:
           name: SL3000-Firmware
