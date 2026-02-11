@@ -1,82 +1,154 @@
-name: SL3000-Official-Firmware
+name: SL3000-Final-Firmware (With Space Optimization)
 on:
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}
+
     steps:
-      # 1. 检出代码（静默模式，无多余日志）
-      - name: Checkout Configs
+      # 1. 检出代码（完整拉取仓库文件）
+      - name: Checkout Your Repository
         uses: actions/checkout@v4
         with:
-          path: configs
-          quiet: true  # 关闭检出时的冗余日志
+          quiet: true
 
-      # 2. 安装依赖（静默模式，屏蔽 apt 警告）
-      - name: Install Dependencies
+      # 🔥 新增：初始空间清理（释放系统冗余空间）
+      - name: Initial Disk Space Optimization
         run: |
-          # 静默更新+安装，仅输出错误
+          df -h  # 显示清理前空间（静默模式下仅输出关键信息）
+          # 清理系统冗余包和缓存
+          sudo apt-get autoremove -y -qq > /dev/null 2>&1
+          sudo apt-get clean -qq > /dev/null 2>&1
+          sudo rm -rf /var/lib/apt/lists/* > /dev/null 2>&1
+          # 清理系统临时文件
+          sudo rm -rf /tmp/* /var/tmp/* > /dev/null 2>&1
+          # 清理 Docker 残留（如果有）
+          sudo rm -rf /var/lib/docker > /dev/null 2>&1
+          # 清理多余工具链和SDK
+          sudo rm -rf /opt/* > /dev/null 2>&1
+          df -h  # 显示清理后空间
+        continue-on-error: true  # 清理失败不影响后续流程
+
+      # 2. 安装完整依赖（安装后立即清理缓存）
+      - name: Install Dependencies + Clean Cache
+        run: |
           sudo apt-get update -qq > /dev/null 2>&1
           sudo apt-get install -y -qq --no-install-recommends \
             build-essential subversion libncurses5-dev zlib1g-dev gawk gcc-multilib \
             flex git-core gettext libssl-dev unzip texinfo libtool bison sharutils \
             curl wget rsync python3 python3-pip python3-setuptools python3-yaml \
             quilt patchutils m4 bc xz-utils libexpat1-dev libz-dev > /dev/null 2>&1
+          # 安装后立即清理 apt 缓存，释放空间
+          sudo apt-get clean -qq > /dev/null 2>&1
+          sudo rm -rf /var/lib/apt/lists/* > /dev/null 2>&1
         continue-on-error: false
 
-      # 3. 克隆源码（静默模式，屏蔽 git 警告）
-      - name: Clone ImmortalWrt Official
+      # 3. 克隆源码（清理旧目录+优化克隆）
+      - name: Clone ImmortalWrt 24.10 + Clean Old Files
         run: |
-          # 强制删除旧目录，静默克隆
+          # 彻底清理旧源码目录（释放大量空间）
           rm -rf openwrt > /dev/null 2>&1
+          # 浅克隆（--depth=1）减少空间占用，同时清理 git 临时文件
           git clone --depth=1 -b openwrt-24.10 --quiet https://github.com/immortalwrt/immortalwrt.git openwrt > /dev/null 2>&1
+          [ -d "openwrt" ] || exit 1
+          # 清理 git 克隆残留的临时文件
+          cd openwrt && git gc --quiet > /dev/null 2>&1
 
-      # 4. 复制配置（静默模式，屏蔽 cp 警告）
-      - name: Copy Custom Configs
+      # 4. 复制配置（按你原路径）
+      - name: Copy Custom Configs (Your Path)
         run: |
-          # 静默创建目录、复制文件，仅输出错误
           mkdir -p openwrt/target/linux/mediatek/{dts,image} > /dev/null 2>&1
-          cp -fv configs/custom-config/mt7981b-sl3000-emmc.dts openwrt/target/linux/mediatek/dts/ > /dev/null 2>&1
-          cp -fv configs/custom-config/filogic.mk openwrt/target/linux/mediatek/image/ > /dev/null 2>&1
-          # 追加 DTS 编译列表，屏蔽重复警告
+          cp -fv custom-config/mt7981b-sl3000-emmc.dts openwrt/target/linux/mediatek/dts/ > /dev/null 2>&1
+          cp -fv custom-config/filogic.mk openwrt/target/linux/mediatek/image/ > /dev/null 2>&1
           grep -q "mt7981b-sl3000-emmc.dtb" openwrt/target/linux/mediatek/dts/Makefile || \
             echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> openwrt/target/linux/mediatek/dts/Makefile > /dev/null 2>&1
 
-      # 5. 生成配置（屏蔽 defconfig 冗余警告）
-      - name: Generate Official Config
+      # 5. 执行你的脚本（按你原路径）
+      - name: Run Your sl3000-patch.sh (Your Path)
+        run: |
+          chmod +x scripts/sl3000-patch.sh > /dev/null 2>&1
+          cd openwrt && ../scripts/sl3000-patch.sh > /dev/null 2>&1
+          [ -f ".config" ] || exit 1
+
+      # 🔥 新增：编译前空间清理（清理源码目录临时文件）
+      - name: Pre-Build Space Cleanup
         working-directory: ./openwrt
         run: |
-          # 生成基础配置，静默写入
-          cat > .config << EOF
-          CONFIG_TARGET_mediatek=y
-          CONFIG_TARGET_mediatek_filogic=y
-          CONFIG_TARGET_mediatek_filogic_DEVICE_sl3000-emmc=y
-          CONFIG_TARGET_KERNEL_PARTSIZE=128
-          CONFIG_TARGET_ROOTFS_PARTSIZE=1024
-          CONFIG_DEVEL=y
-          CONFIG_CCACHE=y
-          CONFIG_SILENT_BUILD=y  # 开启静默编译，关闭大部分警告
-          CONFIG_SILENT_PRINT_ON_ERROR=y  # 仅在报错时输出详细信息
-          EOF
-          # 合并用户配置，屏蔽空文件警告
-          [ -f ../configs/custom-config/sl3000.config ] && cat ../configs/custom-config/sl3000.config >> .config 2>/dev/null
-          # 静默生成配置，仅输出错误
+          # 清理源码目录下的旧构建产物和临时文件
+          make clean > /dev/null 2>&1
+          make dirclean > /dev/null 2>&1
+          # 清理 dl 目录下的冗余依赖包（保留已下载的，清理损坏的）
+          find dl/ -type f -size 0 -delete > /dev/null 2>&1
+          df -h  # 显示编译前剩余空间
+
+      # 6. 生成配置（无 EOF，纯 echo）
+      - name: Generate Config (No EOF)
+        working-directory: ./openwrt
+        run: |
+          > .config
+          echo "CONFIG_TARGET_mediatek=y" >> .config
+          echo "CONFIG_TARGET_mediatek_filogic=y" >> .config
+          echo "CONFIG_TARGET_mediatek_filogic_DEVICE_sl3000-emmc=y" >> .config
+          echo "CONFIG_TARGET_KERNEL_PARTSIZE=128" >> .config
+          echo "CONFIG_TARGET_ROOTFS_PARTSIZE=1024" >> .config
+          echo "CONFIG_DEVEL=y" >> .config
+          echo "CONFIG_CCACHE=y" >> .config
+          echo "CONFIG_SILENT_BUILD=y" >> .config
+          echo "CONFIG_SILENT_PRINT_ON_ERROR=y" >> .config
+          [ -f ../custom-config/sl3000.config ] && cat ../custom-config/sl3000.config >> .config 2>/dev/null
           make defconfig > /dev/null 2>&1
+          sed -i 's/CONFIG_TARGET_KERNEL_PARTSIZE=.*/CONFIG_TARGET_KERNEL_PARTSIZE=128/' .config
+          sed -i 's/CONFIG_TARGET_ROOTFS_PARTSIZE=.*/CONFIG_TARGET_ROOTFS_PARTSIZE=1024/' .config
 
-      # 6. 编译（静默模式，仅保留关键日志）
-      - name: Build Firmware
+      # 7. 下载依赖（下载后清理冗余）
+      - name: Download Dependencies + Clean Redundant
         working-directory: ./openwrt
         run: |
-          # 静默下载依赖，仅输出错误
           make download -j$(nproc) > /dev/null 2>&1
-          # 单线程静默编译，仅在报错时显示详细日志
-          make -j1 V=s SILENT=1  # SILENT=1 屏蔽编译过程中的冗余警告
+          # 清理重复或损坏的依赖包
+          find dl/ -type f -name "*.tar.*" -size 0 -delete > /dev/null 2>&1
+          [ "$(ls -A dl/ 2>/dev/null)" ] || exit 1
 
-      # 7. 上传产物（静默模式）
-      - name: Upload All Outputs
+      # 8. 分步编译（完整流程）
+      - name: Build Firmware (Full Process)
+        working-directory: ./openwrt
+        run: |
+          make tools/install -j1 V=s SILENT=1
+          make toolchain/install -j1 V=s SILENT=1
+          make target/linux/compile -j1 V=s SILENT=1
+          make package/compile -j1 V=s SILENT=1
+          make package/install -j1 V=s SILENT=1
+          make target/install -j1 V=s SILENT=1
+          make image/install -j1 V=s SILENT=1
+
+      # 🔥 新增：编译后即时清理（释放空间用于上传）
+      - name: Post-Build Space Cleanup
+        working-directory: ./openwrt
+        run: |
+          # 清理编译临时文件、工具链和中间产物
+          make clean > /dev/null 2>&1
+          rm -rf build_dir/tmp/ > /dev/null 2>&1
+          rm -rf staging_dir/host/ > /dev/null 2>&1
+          # 保留固件和必要文件，清理其他冗余
+          find bin/targets/mediatek/filogic -type f ! -name "*sl3000-emmc*.bin" ! -name "*sl3000-emmc*.img" -delete > /dev/null 2>&1
+          df -h  # 显示最终剩余空间
+
+      # 9. 验证固件
+      - name: Verify Firmware
+        working-directory: ./openwrt
+        run: |
+          FIRMWARE=$(find bin/targets/mediatek/filogic -type f -size +10M -name "*sl3000-emmc*.bin" -o -name "*sl3000-emmc*.img")
+          [ -n "$FIRMWARE" ] || { echo "❌ 未生成有效固件"; exit 1; }
+          echo "✅ 固件生成成功：$FIRMWARE"
+
+      # 10. 上传产物
+      - name: Upload Firmware
         uses: actions/upload-artifact@v4
         with:
-          name: SL3000-All-Outputs
+          name: SL3000-Firmware
           path: openwrt/bin/targets/mediatek/filogic/*
-          quiet: true  # 关闭上传时的冗余日志
+          quiet: true
