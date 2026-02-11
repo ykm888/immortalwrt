@@ -13,7 +13,7 @@
     model = "SL-3000 eMMC Router (128MB/1GB Custom Edition)";
     compatible = "sl,sl3000-emmc", "mediatek,mt7981";
 
-    /* ✅ 核心逻辑：物理锁定 1GB 内存 (1024MB) */
+    /* 物理锁定 1GB 内存 */
     memory@40000000 {
         device_type = "memory";
         reg = <0x0 0x40000000 0x0 0x40000000>;
@@ -65,7 +65,7 @@
     vmmc-supply = <&reg_3p3v>;
     status = "okay";
 
-    /* ✅ 核心逻辑：128MB/1GB 物理分区表 */
+    /* 128MB/1GB 物理分区表 */
     partitions {
         compatible = "fixed-partitions";
         #address-cells = <1>;
@@ -88,13 +88,13 @@
             read-only;
         };
 
-        /* 核心补丁：128MB 内核分区 */
+        /* 128MB 内核分区 */
         partition@380000 {
             label = "kernel";
             reg = <0x380000 0x8000000>;
         };
 
-        /* 核心补丁：1GB 根文件系统分区 */
+        /* 1GB 根文件系统分区 */
         partition@8380000 {
             label = "rootfs";
             reg = <0x8380000 0x40000000>;
@@ -104,7 +104,8 @@
 
 &pio {
     mmc0_pins_default: mmc0-pins-default {
-        mux { function = "flash"; groups = "emmc_51"; };
+        // ✅ 修正：MT7981的eMMC引脚组命名为"emmc"
+        mux { function = "flash"; groups = "emmc"; };
         conf-cmd-dat {
             pins = "EMMC_DATA0", "EMMC_DATA1", "EMMC_DATA2", "EMMC_DATA3",
                    "EMMC_DATA4", "EMMC_DATA5", "EMMC_DATA6", "EMMC_DATA7", "EMMC_CMD";
@@ -125,7 +126,8 @@
     };
 
     mmc0_pins_uhs: mmc0-pins-uhs {
-        mux { function = "flash"; groups = "emmc_51"; };
+        // ✅ 修正：MT7981的eMMC引脚组命名为"emmc"
+        mux { function = "flash"; groups = "emmc"; };
         conf-cmd-dat {
             pins = "EMMC_DATA0", "EMMC_DATA1", "EMMC_DATA2", "EMMC_DATA3",
                    "EMMC_DATA4", "EMMC_DATA5", "EMMC_DATA6", "EMMC_DATA7", "EMMC_CMD";
