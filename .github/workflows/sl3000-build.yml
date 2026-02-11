@@ -1,28 +1,26 @@
-name: SL3000-完整流程（工具链+固件连续构建）
+name: SL3000-FINAL-BUILD
 on:
   workflow_dispatch:
 
 jobs:
-  build-full:
+  build:
     runs-on: ubuntu-22.04
     steps:
-      # 1. 检出仓库
-      - name: 1. 检出代码
+      - name: 1. 检出仓库
         uses: actions/checkout@v4
-        with: { quiet: true }
+        with:
+          fetch-depth: 1
 
-      # 2. 磁盘空间清理
-      - name: 2. 磁盘清理
+      - name: 2. 磁盘空间清理
         run: |
           df -h
-          sudo swapoff -a 2>/dev/null || true
+          sudo swapoff -a || true
           sudo rm -rf /swapfile /usr/share/dotnet /usr/local/lib/android /opt/ghc /var/lib/docker /opt/hostedtoolcache /tmp/* /var/tmp/* 2>/dev/null || true
           sudo apt-get autoremove -y --purge >/dev/null 2>&1
           sudo apt-get clean >/dev/null 2>&1
           sudo rm -rf /var/lib/apt/lists/*
           df -h
 
-      # 3. 安装依赖
       - name: 3. 安装编译依赖
         run: |
           sudo apt-get update -qq
@@ -31,46 +29,41 @@ jobs:
             python3 device-tree-compiler pigz rsync unzip wget curl git subversion \
             libz-dev libexpat1-dev texinfo libtool python3-pip python3-yaml quilt patchutils xz-utils
 
-      # 4. 克隆ImmortalWrt
-      - name: 4. 克隆ImmortalWrt 24.10
+      - name: 4. 克隆 ImmortalWrt 24.10
         run: |
           rm -rf openwrt
           git clone --depth=1 -b openwrt-24.10 --quiet https://github.com/immortalwrt/immortalwrt.git openwrt
 
-      # 5. 复制自定义配置
-      - name: 5. 复制设备配置
+      - name: 5. 物理注入三件套到源码底层
         run: |
           mkdir -p openwrt/target/linux/mediatek/{dts,image}
           cp -f custom-config/mt7981b-sl3000-emmc.dts openwrt/target/linux/mediatek/dts/
-          cp -f custom-config/filogic.mk openwrt/target/linux/mediatek/image/
+          cp -f custom-config/filogic.mk       openwrt/target/linux/mediatek/image/
           grep -q "mt7981b-sl3000-emmc.dtb" openwrt/target/linux/mediatek/dts/Makefile || \
-            echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> openwrt/target/linux/mediatek/dts/Makefile
+          echo 'dtb-$(CONFIG_ARCH_MEDIATEK) += mt7981b-sl3000-emmc.dtb' >> openwrt/target/linux/mediatek/dts/Makefile
 
-      # 6. 执行补丁脚本
-      - name: 6. 运行sl3000-patch.sh
+      - name: 6. 执行你的补丁脚本
         run: |
           chmod +x scripts/sl3000-patch.sh
           cd openwrt && ../scripts/sl3000-patch.sh || true
 
-      # 7. 生成.config
-      - name: 7. 生成配置文件
+      - name: 7. 生成正确 .config（已修复顺序）
         working-directory: ./openwrt
         run: |
           : > .config
           echo "CONFIG_TARGET_mediatek=y" >> .config
           echo "CONFIG_TARGET_mediatek_filogic=y" >> .config
           echo "CONFIG_TARGET_mediatek_filogic_DEVICE_sl3000-emmc=y" >> .config
+          make defconfig >/dev/null 2>&1
+          [ -f ../custom-config/sl3000.config ] && cat ../custom-config/sl3000.config >> .config
           echo "CONFIG_TARGET_KERNEL_PARTSIZE=128" >> .config
           echo "CONFIG_TARGET_ROOTFS_PARTSIZE=1024" >> .config
           echo "CONFIG_DEVEL=y" >> .config
           echo "CONFIG_CCACHE=y" >> .config
-          [ -f ../custom-config/sl3000.config ] && cat ../custom-config/sl3000.config >> .config
-          make defconfig >/dev/null 2>&1 || true
 
-      # 8. 工具链缓存（避免重复编译）
       - name: 8. 缓存工具链
         uses: actions/cache@v4
-        id: toolchain-cache
+        id: tc-cache
         with:
           path: |
             openwrt/staging_dir
@@ -78,17 +71,15 @@ jobs:
             openwrt/dl
           key: sl3000-tc-$(sha256sum openwrt/.config | head -c16)
 
-      # 9. 构建工具链（缓存命中则跳过）
-      - name: 9. 构建工具链
-        if: steps.toolchain-cache.outputs.cache-hit != 'true'
+      - name: 9. 构建工具链（缓存不存在才编译）
         working-directory: ./openwrt
+        if: steps.tc-cache.outputs.cache-hit != 'true'
         run: |
-          make download -j4  # 显示下载进度
+          make download -j4
           make tools/install -j1 V=s
           make toolchain/install -j1 V=s
 
-      # 10. 构建固件（工具链后直接接着来）
-      - name: 10. 构建固件
+      - name: 10. 构建固件（连续执行）
         working-directory: ./openwrt
         run: |
           make target/linux/compile -j1 V=s
@@ -97,25 +88,21 @@ jobs:
           make target/install -j1 V=s
           make image/install -j1 V=s
 
-      # 11. 检查固件
-      - name: 11. 验证固件
+      - name: 11. 检查固件并输出日志
         working-directory: ./openwrt
         run: |
           FIRMWARE=$(find bin/targets/mediatek/filogic -type f -size +10M -name "*sl3000-emmc*" | head -1)
           if [ -n "$FIRMWARE" ]; then
-            echo "✅ 构建成功！固件：$FIRMWARE"
-            ls -lh "$FIRMWARE"
+            echo "✅ 固件构建成功！"
+            ls -lh $FIRMWARE
           else
-            echo -e "\n❌ 未生成固件，排查信息："
-            echo "--- 固件目录 ---"
-            ls -lh bin/targets/mediatek/filogic/ 2>/dev/null
+            echo "❌ 未生成固件"
+            ls -lh bin/targets/mediatek/filogic/
             exit 1
           fi
 
-      # 12. 上传固件
       - name: 12. 上传固件
         uses: actions/upload-artifact@v4
         with:
           name: SL3000-Firmware
           path: openwrt/bin/targets/mediatek/filogic/*
-          quiet: true
