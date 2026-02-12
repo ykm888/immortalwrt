@@ -10,7 +10,7 @@
     #address-cells = <2>;
     #size-cells = <2>;
 
-    /* 物理修正：名字与官方 23.05 及机器识别码对齐 */
+    /* 物理修正：与官方 23.05 识别码 sl,3000-emmc 达成 100% 物理对齐 */
     model = "SL 3000 (eMMC) Custom Edition";
     compatible = "sl,3000-emmc", "mediatek,mt7981";
 
