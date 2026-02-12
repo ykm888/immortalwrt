@@ -22,26 +22,35 @@ jobs:
           sudo rm -f /swapfile || true
           sudo fallocate -l 12G /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile || echo "Swap Skip"
 
-      - name: "📂 Clone ImmortalWrt (Lock Branch 24.10)"
+      - name: "📂 Clone ImmortalWrt (物理锁定 24.10 官方源)"
         run: |
-          # 🔥 严格锁定你指定的仓库和分支
           git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git openwrt
 
       - name: Update & Install Feeds
         working-directory: ./openwrt
         run: |
           ./scripts/feeds update -a
-          ./scripts/feeds install -a > /dev/null 2>&1  # 🔥 物理拦截日志防止污染
+          ./scripts/feeds install -a > /dev/null 2>&1
 
       - name: Run patch script
         run: |
           chmod +x scripts/sl3000-patch.sh
           ./scripts/sl3000-patch.sh
 
+      - name: "🛡️ [物理审计] 关键文件在位校验"
+        working-directory: ./openwrt
+        run: |
+          echo "Checking DTS Paths..."
+          ls -l target/linux/mediatek/dts/mt7981b-sl3000-emmc.dts
+          ls -l target/linux/mediatek/files-6.6/arch/arm64/boot/dts/mediatek/mt7981b-sl3000-emmc.dts
+          echo "Checking MK File..."
+          ls -l target/linux/mediatek/image/filogic.mk
+          echo "Checking Config..."
+          grep "CONFIG_TARGET_mediatek_filogic_DEVICE_sl3000-emmc=y" .config
+
       - name: Build Toolchain
         working-directory: ./openwrt
         run: |
-          # 🔥 关键顺序：先 defconfig 平息冲突，再编译工具链生成 mkhash
           make defconfig FORCE=1
           make tools/install -j$(nproc) FORCE=1 || make tools/install -j1 V=s FORCE=1
           make toolchain/install -j$(nproc) FORCE=1 || make toolchain/install -j1 V=s FORCE=1
@@ -49,30 +58,13 @@ jobs:
       - name: Build Firmware
         working-directory: ./openwrt
         run: |
-          # 1. 内核与 DTS 编译
           make target/linux/compile -j$(nproc) FORCE=1
-          # 2. 软件包编译
           make package/compile -j$(nproc) FORCE=1 || make package/compile -j1 V=s FORCE=1
           make package/install -j$(nproc) FORCE=1 || make package/install -j1 V=s FORCE=1
-          # 3. 🔥 镜像合成 (强制单线程 V=s)
+          # 🔥 镜像合成：强制单线程 V=s 以便最终排错，锁定 128/1024
           make target/linux/install -j1 V=s DEVICE_sl3000-emmc=y \
             CONFIG_TARGET_KERNEL_PARTSIZE=128 \
             CONFIG_TARGET_ROOTFS_PARTSIZE=1024 FORCE=1
-
-      - name: "🛡️ [物理审计] 结果回溯"
-        working-directory: ./openwrt
-        if: always()
-        run: |
-          echo "==================== 🔎 物理审计 ===================="
-          FIRMWARE_DIR="bin/targets/mediatek/filogic"
-          if [ -d "$FIRMWARE_DIR" ] && [ "$(ls -A $FIRMWARE_DIR/*sysupgrade.bin 2>/dev/null)" ]; then
-            echo "✅ 成功：固件已生成"
-            ls -lh $FIRMWARE_DIR/*sysupgrade.bin
-          else
-            echo "❌ 失败：显示最后关键日志"
-            tail -n 100 build.log || echo "No build.log"
-            exit 1
-          fi
 
       - name: Upload firmware
         uses: actions/upload-artifact@v4
