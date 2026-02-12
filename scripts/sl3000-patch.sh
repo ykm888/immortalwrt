@@ -13,18 +13,15 @@ cd "${WORKDIR}"
 mkdir -p staging_dir/host
 touch staging_dir/host/.prereq-build
 
-# 2. 🔥 [核心：物理重建 .config]
-# 彻底删除旧的，不给残留字符任何机会
+# 2. 🔥 [物理重建 .config]
 rm -f .config
+{
+    echo "CONFIG_TARGET_mediatek=y"
+    echo "CONFIG_TARGET_mediatek_filogic=y"
+    echo "CONFIG_TARGET_mediatek_filogic_DEVICE_sl3000-emmc=y"
+} > .config
 
-# 强制注入最基础、最正确的 3 行目标定义
-cat <<EOF > .config
-CONFIG_TARGET_mediatek=y
-CONFIG_TARGET_mediatek_filogic=y
-CONFIG_TARGET_mediatek_filogic_DEVICE_sl3000-emmc=y
-EOF
-
-# 物理清洗自定义配置：删除空格、删除回车、只提取 CONFIG_ 格式
+# 物理清洗：删除空格、删除回车、只提取 CONFIG_ 格式
 if [ -f "${SRC_DIR}/sl3000.config" ]; then
     grep "^CONFIG_" "${SRC_DIR}/sl3000.config" | tr -d '\r' | sed 's/ //g' >> .config || true
 fi
@@ -34,7 +31,7 @@ sed -i '/_PARTSIZE/d' .config
 echo "CONFIG_TARGET_KERNEL_PARTSIZE=128" >> .config
 echo "CONFIG_TARGET_ROOTFS_PARTSIZE=1024" >> .config
 
-# 4. 物理注入 DTS 和 MK (确保编译目标物理存在)
+# 4. 物理注入 DTS 和 MK
 mkdir -p target/linux/mediatek/{dts,image}
 [ -f "${SRC_DIR}/mt7981b-sl3000-emmc.dts" ] && cp -fv "${SRC_DIR}/mt7981b-sl3000-emmc.dts" target/linux/mediatek/dts/
 [ -f "${SRC_DIR}/filogic.mk" ] && cp -fv "${SRC_DIR}/filogic.mk" target/linux/mediatek/image/
@@ -43,4 +40,4 @@ mkdir -p target/linux/mediatek/{dts,image}
 sed -i 's/$(STAGING_DIR_HOST)\/bin\/usign/true/g' package/Makefile || true
 sed -i 's/$(STAGING_DIR_HOST)\/bin\/ucert/true/g' package/Makefile || true
 
-echo -e "\033[32m✅ 补丁重构完成，配置已达到真空级纯净。\033[0m"
+echo -e "\033[32m✅ 补丁重构完成。\033[0m"
