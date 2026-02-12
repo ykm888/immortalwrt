@@ -11,11 +11,11 @@ jobs:
 
       - name: "🚀 [极致补全] 磁盘清理 & 全量依赖"
         run: |
-          # 1. 清理空间
+          # 1. 清理
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /var/lib/docker /usr/local/share/powershell /usr/share/swift /usr/local/.ghcup /usr/lib/jvm || true
           sudo docker image prune -a -f || true
           
-          # 2. 安装依赖
+          # 2. 依赖
           sudo apt update
           sudo apt install -y build-essential clang flex bison gawk gettext \
             gettext-base git libncurses5-dev libssl-dev python3 python3-distutils \
@@ -23,7 +23,7 @@ jobs:
             device-tree-compiler wget curl file tar bzip2 patch setserial \
             pkg-config qemu-utils
           
-          # 3. Swap 修复
+          # 3. Swap
           sudo swapoff -a || true
           sudo rm -f /swapfile || true
           sudo fallocate -l 12G /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile || echo "Swap Skip"
@@ -34,36 +34,35 @@ jobs:
       - name: Update & Install Feeds
         working-directory: ./openwrt
         run: |
-          # 🔥 [关键顺序] 先更新 Feeds，并物理屏蔽日志
+          # 🔥 先更新 feeds，产生的日志直接丢弃，此时 .config 还未生成，绝对安全
           ./scripts/feeds update -a
           ./scripts/feeds install -a > /dev/null 2>&1
 
       - name: Run patch script
         run: |
-          # 🔥 [关键顺序] Feeds 之后再运行补丁，注入 .config
+          # 🔥 这一步生成“无菌版” .config
           chmod +x scripts/sl3000-patch.sh
           ./scripts/sl3000-patch.sh
 
       - name: Build Toolchain (Fix mkhash)
         working-directory: ./openwrt
         run: |
-          # 🔥 [关键修复] 先编译 Tools，确保 mkhash 存在，解决 Error 1
-          # 此时还不需要 .config 完整生成，只需要基础环境
+          # 🔥 此时 .config 已经存在且干净，tools/install 可以正常读取并编译 mkhash
           make tools/install -j$(nproc) FORCE=1 || make tools/install -j1 V=s FORCE=1
           make toolchain/install -j$(nproc) FORCE=1 || make toolchain/install -j1 V=s FORCE=1
 
       - name: Generate Config
         working-directory: ./openwrt
         run: |
-          # 🔥 [关键修复] 工具链准备好后，才正式生成配置
-          # 此时 mkhash 已存在，不会报错；.config 已被脚本清洗，不会有 separator 错误
+          # 🔥 工具链就绪，正式展开完整配置
           make defconfig FORCE=1
 
       - name: "🔥 内核编译与 DTS 确认"
         working-directory: ./openwrt
         run: |
           make target/linux/compile -j$(nproc) FORCE=1 || make target/linux/compile -j1 V=s FORCE=1
-          # 再次确认 DTS 注入 (双重保险)
+          
+          # 双重确认 DTS
           DTS_SRC="${{ github.workspace }}/custom-config/mt7981b-sl3000-emmc.dts"
           find build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | while read -r dts_path; do
             cp -fv "$DTS_SRC" "$dts_path/"
@@ -77,7 +76,7 @@ jobs:
           make package/compile -j$(nproc) FORCE=1 || make package/compile -j1 V=s FORCE=1
           make package/install -j$(nproc) FORCE=1 || make package/install -j1 V=s FORCE=1
           
-          # 🔥 [物理强灌] 最终锁定分区参数
+          # 🔥 [物理强灌] 最终锁定
           make target/linux/install -j$(nproc) DEVICE_sl3000-emmc=y \
             CONFIG_TARGET_KERNEL_PARTSIZE=128 \
             CONFIG_TARGET_ROOTFS_PARTSIZE=1024 FORCE=1 2>&1 | tee build.log || \
@@ -95,9 +94,8 @@ jobs:
             echo "✅ 成功：固件已生成"
             ls -lh $FIRMWARE_DIR/*sysupgrade.bin
           else
-            echo "❌ 失败：提取日志"
-            [ -f "build.log" ] && tail -n 100 build.log || echo "无日志"
-            grep "CONFIG_TARGET_KERNEL_PARTSIZE" .config || echo "变量未命中"
+            echo "❌ 失败：日志分析"
+            [ -f "build.log" ] && tail -n 100 build.log || echo "无 Build 日志"
             exit 1
           fi
 
