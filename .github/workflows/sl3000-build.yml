@@ -56,8 +56,8 @@ jobs:
           make target/linux/compile -j$(nproc) FORCE=1
           make package/compile -j$(nproc) FORCE=1
           make package/install -j$(nproc) FORCE=1
-          # 🔥 严格延续你最后的最后一步逻辑
-          make target/linux/install -j1 V=s DEVICE_sl3000-emmc=y \
+          # 🔥 严格对齐：物理锁定设备标识为 3000-emmc
+          make target/linux/install -j1 V=s DEVICE_3000-emmc=y \
             CONFIG_TARGET_KERNEL_PARTSIZE=128 \
             CONFIG_TARGET_ROOTFS_PARTSIZE=1024 IGNORE_ERRORS=1 FORCE=1
 
