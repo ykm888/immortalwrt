@@ -44,10 +44,7 @@ jobs:
       - name: "🔥 [物理对齐] 内核编译与 DTS 注入"
         working-directory: ./openwrt
         run: |
-          # 1. 解压内核源码
           make target/linux/compile -j$(nproc) || make target/linux/compile -j1 V=s
-          
-          # 2. DTS 强灌逻辑 (解决 No such file 报错)
           DTS_SRC="${{ github.workspace }}/custom-config/mt7981b-sl3000-emmc.dts"
           find build_dir -path "*/arch/arm64/boot/dts/mediatek" -type d | while read -r dts_path; do
             cp -fv "$DTS_SRC" "$dts_path/"
@@ -58,15 +55,12 @@ jobs:
       - name: Build Firmware
         working-directory: ./openwrt
         run: |
-          # 🔥 [物理修复点 1] 彻底消除 out of sync 警告
+          # 🔥 [物理修复点] 彻底消除 out of sync，确保 dd 变量 bs=128M 有效
           make defconfig
-          
-          # 编译包 (多核并行)
           make package/compile -j$(nproc) || make package/compile -j1 V=s
           make package/install -j$(nproc) || make package/install -j1 V=s
           
-          # 🔥 [物理修复点 2] 合并打包路径，取消 image/install 独立调用
-          # 这将生成 sysupgrade.bin
+          # 🔥 [路径修正] 合并执行 target/install 触发镜像合成
           make target/linux/install -j$(nproc) DEVICE_sl3000-emmc=y || \
           make target/linux/install -j1 V=s DEVICE_sl3000-emmc=y
 
@@ -79,9 +73,9 @@ jobs:
             echo "✅ 固件成功生成！"
             ls -lh $FIRMWARE_DIR/*sysupgrade.bin
           else
-            echo "❌ 固件生成失败，最后日志回溯："
-            # 自动探测最后 50 行错误输出
-            find build_dir -name ".image_failed" -o -name ".build_error" || true
+            echo "❌ 固件生成失败。物理回溯最后错误..."
+            # 如果是因为 dd 报错，这里会尝试定位 Makefile 的输出
+            tail -n 100 ${{ github.workspace }}/build.log 2>/dev/null || echo "无法定位日志，请检查上方 Build 步骤输出。"
             exit 1
           fi
 
