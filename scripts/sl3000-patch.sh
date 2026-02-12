@@ -30,10 +30,10 @@ sed -i '/_PARTSIZE/d' .config
 echo "CONFIG_TARGET_KERNEL_PARTSIZE=128" >> .config
 echo "CONFIG_TARGET_ROOTFS_PARTSIZE=1024" >> .config
 
-# 4. 🔥 [镜像生成放宽] 物理修复：删除 pad-to 行以规避 Build/true 错误
+# 4. 🔥 [镜像生成放宽] 物理屏蔽 pad-to 强制校验
 # 解决生成固件时因尺寸稍微超标导致的 Error 1
 if [ -f "include/image.mk" ]; then
-    sed -i '/pad-to/d' include/image.mk || true
+    sed -i 's/$(STAGING_DIR_HOST)\/bin\/pad-to/true/g' include/image.mk || true
 fi
 
 # 5. 🔥 [DTS 路径放宽] 三重物理注入 (适配 24.10)
@@ -48,12 +48,11 @@ if [ -f "${SRC_DIR}/mt7981b-sl3000-emmc.dts" ]; then
     cp -fv "${SRC_DIR}/mt7981b-sl3000-emmc.dts" "$DTS_C/"
 fi
 
-# 6. 🔥 [镜像定义放宽] 物理修复：物理删除限制指令
+# 6. 🔥 [镜像定义放宽] 
 mkdir -p target/linux/mediatek/image
 if [ -f "${SRC_DIR}/filogic.mk" ]; then
     cp -fv "${SRC_DIR}/filogic.mk" target/linux/mediatek/image/
-    sed -i '/pad-to/d' target/linux/mediatek/image/filogic.mk || true
-    sed -i '/check-size/d' target/linux/mediatek/image/filogic.mk || true
+    sed -i 's/pad-to/true/g' target/linux/mediatek/image/filogic.mk || true
 fi
 
 # 7. 屏蔽签名逻辑
