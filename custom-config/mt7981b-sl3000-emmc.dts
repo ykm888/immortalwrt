@@ -10,8 +10,9 @@
     #address-cells = <2>;
     #size-cells = <2>;
 
-    model = "SL-3000 eMMC Router (128MB/1GB Custom Edition)";
-    compatible = "sl,sl3000-emmc", "mediatek,mt7981";
+    /* 物理修正：名字与官方 23.05 及机器识别码对齐 */
+    model = "SL 3000 (eMMC) Custom Edition";
+    compatible = "sl,3000-emmc", "mediatek,mt7981";
 
     memory@40000000 {
         device_type = "memory";
@@ -85,14 +86,16 @@
             read-only;
         };
 
+        /* 物理锁定：Kernel 128MB (0x8000000) */
         partition@380000 {
             label = "kernel";
             reg = <0x380000 0x8000000>;
         };
 
+        /* 物理锁定：Rootfs 1024MB (0x40000000) */
         partition@8380000 {
             label = "rootfs";
-            reg = <0x8380000 0x20000000>;
+            reg = <0x8380000 0x40000000>;
         };
     };
 };
