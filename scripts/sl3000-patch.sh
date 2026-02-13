@@ -28,6 +28,8 @@ rm -f .config
     echo "CONFIG_TARGET_ROOTFS_PARTSIZE=1024"
     echo "CONFIG_TARGET_ROOTFS_SQUASHFS=y"
     echo "CONFIG_TARGET_IMAGES_GZIP=y"
+    # 24.10 必须物理锁定分区名，否则 sysupgrade 找不到挂载点
+    echo "CONFIG_TARGET_ROOTFS_PARTNAME=\"rootfs\""
     echo "CONFIG_PACKAGE_kmod-mmc=y"
     echo "CONFIG_PACKAGE_kmod-sdhci-mtk=y"
     echo "CONFIG_PACKAGE_kmod-fs-f2fs=y"
@@ -37,6 +39,9 @@ rm -f .config
     echo "CONFIG_PACKAGE_lsblk=y"
     echo "CONFIG_PACKAGE_blkid=y"
     echo "CONFIG_PACKAGE_block-mount=y"
+    # 物理增加 GPT 磁盘管理支持，确保 eMMC 分区表识别
+    echo "CONFIG_PACKAGE_fdisk=y"
+    echo "CONFIG_PACKAGE_gptfdisk=y"
     echo "CONFIG_PACKAGE_kmod-zram=y"
     echo "CONFIG_PACKAGE_zram-swap=y"
     echo "CONFIG_PACKAGE_luci=y"
@@ -45,6 +50,8 @@ rm -f .config
     echo "CONFIG_PACKAGE_wget-ssl=y"
     echo "CONFIG_PACKAGE_htop=y"
     echo "CONFIG_PACKAGE_nano=y"
+    # 物理禁用签名，防止新版固件因校验不通过被 Bootloader 拒收
+    echo "# CONFIG_SIGNED_PACKAGES is not set"
 } > .config
 
 # 3. 🔥 [物理注入 DTS] 适配 24.10 内核 6.6 编译链
@@ -75,8 +82,9 @@ if [ -f "${SRC_DIR}/filogic.mk" ]; then
     touch target/linux/mediatek/image/filogic.mk
 fi
 
-# 5. 屏蔽签名校验
+# 5. 屏蔽签名校验 (24.10 增强版屏蔽)
 sed -i 's/$(STAGING_DIR_HOST)\/bin\/usign/true/g' package/Makefile || true
 sed -i 's/$(STAGING_DIR_HOST)\/bin\/ucert/true/g' package/Makefile || true
+sed -i 's/$(STAGING_DIR_HOST)\/bin\/usign/true/g' include/image.mk || true
 
-echo -e "\033[32m✅ 24.10 物理补丁注入完成，DTS 已注册。即将开始真正的重编流程。\033[0m"
+echo -e "\033[32m✅ 24.10 物理补丁注入完成，DTS 已注册并配置 GPT 支持。\033[0m"
