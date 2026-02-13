@@ -10,8 +10,8 @@
     #address-cells = <2>;
     #size-cells = <2>;
 
-    /* 物理修正：与官方 23.05 识别码 sl,3000-emmc 达成 100% 物理对齐 */
-    model = "SL 3000 (eMMC) Custom Edition";
+    /* 物理对齐：使用原厂导出的 23.05 识别码 */
+    model = "SL-3000 eMMC bootstrap version";
     compatible = "sl,3000-emmc", "mediatek,mt7981";
 
     memory@40000000 {
@@ -20,8 +20,16 @@
     };
 
     chosen {
-        bootargs = "console=ttyS0,115200n8 earlycon=uart8250,mmio32,0x11002000";
+        bootargs = "console=ttyS0,115200n8 earlycon=uart8250,mmio32,0x11002000 root=PARTLABEL=rootfs rootwait rootfstype=squashfs,f2fs";
         stdout-path = "serial0:115200n8";
+    };
+
+    /* 物理锁定：原厂 GPIO 引脚配置 */
+    gpio-leds {
+        compatible = "gpio-leds";
+        red { label = "red:status"; gpios = <&pio 10 GPIO_ACTIVE_LOW>; };
+        green { label = "green:status"; gpios = <&pio 11 GPIO_ACTIVE_LOW>; };
+        blue { label = "blue:status"; gpios = <&pio 12 GPIO_ACTIVE_LOW>; };
     };
 
     gpio-keys {
@@ -31,13 +39,10 @@
             gpios = <&pio 1 GPIO_ACTIVE_LOW>;
             linux,code = <KEY_RESTART>;
         };
-    };
-
-    gpio-leds {
-        compatible = "gpio-leds";
-        status_blue {
-            label = "blue:status";
-            gpios = <&pio 8 GPIO_ACTIVE_HIGH>;
+        mesh {
+            label = "mesh";
+            gpios = <&pio 0 GPIO_ACTIVE_LOW>;
+            linux,code = <KEY_WPS_BUTTON>;
         };
     };
 
@@ -64,35 +69,23 @@
     vmmc-supply = <&reg_3p3v>;
     status = "okay";
 
+    /* 物理扩容：1024MB 布局 */
     partitions {
         compatible = "fixed-partitions";
         #address-cells = <1>;
         #size-cells = <1>;
 
-        partition@0 {
-            label = "gpt";
-            reg = <0x0 0x100000>;
-            read-only;
-        };
-
-        partition@100000 {
-            label = "u-boot-env";
-            reg = <0x100000 0x80000>;
-        };
-
-        partition@180000 {
-            label = "factory";
-            reg = <0x180000 0x200000>;
-            read-only;
-        };
-
-        /* 物理锁定：Kernel 128MB (0x8000000) */
+        partition@0 { label = "gpt"; reg = <0x0 0x100000>; read-only; };
+        partition@100000 { label = "u-boot-env"; reg = <0x100000 0x80000>; };
+        partition@180000 { label = "factory"; reg = <0x180000 0x200000>; read-only; };
+        
+        /* Kernel 物理锁定: 128MB */
         partition@380000 {
             label = "kernel";
             reg = <0x380000 0x8000000>;
         };
 
-        /* 物理锁定：Rootfs 1024MB (0x40000000) */
+        /* Rootfs 物理锁定: 1024MB */
         partition@8380000 {
             label = "rootfs";
             reg = <0x8380000 0x40000000>;
@@ -102,34 +95,22 @@
 
 &pio {
     mmc0_pins_default: mmc0-pins-default {
-        mux { function = "flash"; groups = "emmc"; };
+        mux { function = "flash"; groups = "emmc_45"; }; # 物理修复：锁定原厂分组
         conf-cmd-dat {
             pins = "EMMC_DATA0", "EMMC_DATA1", "EMMC_DATA2", "EMMC_DATA3",
                    "EMMC_DATA4", "EMMC_DATA5", "EMMC_DATA6", "EMMC_DATA7", "EMMC_CMD";
-            input-enable;
-            drive-strength = <4>;
-            bias-pull-up;
+            input-enable; drive-strength = <4>; bias-pull-up;
         };
-        conf-clk {
-            pins = "EMMC_CK";
-            drive-strength = <6>;
-            bias-pull-down;
-        };
-        conf-rst {
-            pins = "EMMC_RSTB";
-            drive-strength = <4>;
-            bias-pull-up;
-        };
+        conf-clk { pins = "EMMC_CK"; drive-strength = <6>; bias-pull-down; };
+        conf-rst { pins = "EMMC_RSTB"; drive-strength = <4>; bias-pull-up; };
     };
 
     mmc0_pins_uhs: mmc0-pins-uhs {
-        mux { function = "flash"; groups = "emmc"; };
+        mux { function = "flash"; groups = "emmc_45"; };
         conf-cmd-dat {
             pins = "EMMC_DATA0", "EMMC_DATA1", "EMMC_DATA2", "EMMC_DATA3",
                    "EMMC_DATA4", "EMMC_DATA5", "EMMC_DATA6", "EMMC_DATA7", "EMMC_CMD";
-            input-enable;
-            drive-strength = <4>;
-            bias-pull-up;
+            input-enable; drive-strength = <4>; bias-pull-up;
         };
     };
 
