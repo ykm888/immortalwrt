@@ -21,13 +21,15 @@ echo "✅ 注入 DTS: ${DTS_DEST}/${DTS_NAME}.dts"
 cp -fv "${SRC_DIR}/${DTS_NAME}.dts" "${DTS_DEST}/"
 cp -fv "${SRC_DIR}/filogic.mk" "target/linux/mediatek/image/filogic.mk"
 
-# 4. 配置固化：使用覆盖模式，物理对齐 128M 偏移
+# 4. 配置固化：使用覆盖模式，物理对齐 128MB (131072 KB) 偏移
 {
     echo "CONFIG_TARGET_mediatek=y"
     echo "CONFIG_TARGET_mediatek_filogic=y"
     echo "CONFIG_TARGET_mediatek_filogic_DEVICE_3000-emmc=y"
-    echo "CONFIG_TARGET_KERNEL_PARTSIZE=128"
-    echo "CONFIG_TARGET_ROOTFS_PARTSIZE=1024"
+    # 物理锁定：128MB = 131072 KB
+    echo "CONFIG_TARGET_KERNEL_PARTSIZE=131072"
+    # 物理锁定：1024MB = 1048576 KB
+    echo "CONFIG_TARGET_ROOTFS_PARTSIZE=1048576"
     echo "CONFIG_TARGET_ROOTFS_PARTNAME=\"rootfs\""
     echo "CONFIG_PACKAGE_kmod-mmc=y"
     echo "CONFIG_PACKAGE_kmod-mtk-sd=y"
