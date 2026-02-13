@@ -6,8 +6,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-22.04
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -26,67 +24,32 @@ jobs:
       - name: "📂 Clone ImmortalWrt (24.10)"
         run: git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git openwrt
 
-      - name: "⚡ [核心完整] 物理缓存机制"
-        uses: actions/cache@v4
-        with:
-          path: |
-            openwrt/dl
-            openwrt/staging_dir
-            openwrt/build_dir/host
-            openwrt/build_dir/toolchain-*
-          key: ${{ runner.os }}-openwrt-cache-${{ hashFiles('openwrt/include/toplevel.mk') }}
-          restore-keys: |
-            ${{ runner.os }}-openwrt-cache-
-
       - name: "🔄 Update & Install Feeds"
         working-directory: ./openwrt
         run: |
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      - name: "🛠️ 执行物理补丁 (核心修复步)"
-        # 此处不使用 working-directory，由脚本内部物理定位 openwrt 目录
+      - name: "🛠️ 执行物理补丁"
         run: |
           chmod +x scripts/sl3000-patch.sh
           ./scripts/sl3000-patch.sh
 
-      - name: "🏗️ Build Toolchain"
+      - name: "🏗️ 编译固件"
         working-directory: ./openwrt
         run: |
-          make defconfig FORCE=1
-          make tools/install -j$(nproc) FORCE=1 || make tools/install -j1 V=s FORCE=1
-          make toolchain/install -j$(nproc) FORCE=1 || make toolchain/install -j1 V=s FORCE=1
-
-      - name: "🔥 Build Firmware (物理对齐版)"
-        working-directory: ./openwrt
-        run: |
-          # 彻底清除旧产物与缓存
+          # 清除产物
           rm -rf bin/targets/mediatek/filogic/*
-          
-          # 物理强制：再次 defconfig 确保脚本注入的 1024MB 空间生效
+          # 固化补丁配置
           make defconfig FORCE=1
-          
-          # 物理强制：内核重编，应用 24.10 的 mt7981b-3000-emmc 指纹
+          # 强制内核重编以吸收 files-6.6 目录下的新 DTS
           make target/linux/clean FORCE=1
-          
-          # 全流程编译：确保生成 metadata.json 和 sysupgrade 兼容校验
-          make -j$(nproc) FORCE=1 || make -j1 V=s FORCE=1
-          
-          # 备份配置
-          cp .config bin/targets/mediatek/filogic/3000-emmc.config || true
+          # 全流程编译
+          make -j$(nproc) || make -j1 V=s
 
-      - name: "📦 Upload Artifacts"
-        uses: actions/upload-artifact@v4
+      - name: "📦 上传产物"
         if: always()
         with:
           name: SL3000-24.10-Firmware
           path: openwrt/bin/targets/mediatek/filogic/
-
-      - name: "🚢 [延续] 自动发布固件"
-        if: success()
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: SL3000-v24.10-${{ github.run_id }}
-          files: |
-            openwrt/bin/targets/mediatek/filogic/*.bin
-            openwrt/bin/targets/mediatek/filogic/*.config
+        uses: actions/upload-artifact@v4
