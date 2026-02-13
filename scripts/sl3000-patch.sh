@@ -1,24 +1,47 @@
 #!/bin/bash
 set -eo pipefail
 
+# 物理路径锁定
 REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd)
-WORKDIR="${REPO_ROOT}/openwrt"
+# 自动探测工作目录：兼容 Actions 和本地路径
+if [ -d "${REPO_ROOT}/openwrt" ]; then
+    WORKDIR="${REPO_ROOT}/openwrt"
+else
+    WORKDIR="${REPO_ROOT}"
+fi
 SRC_DIR="${REPO_ROOT}/custom-config"
-
-echo -e "\033[32m🚀 [SL3000] 执行 24.10 物理适配：锁定 3000-emmc 并强制重编...\033[0m"
 
 cd "${WORKDIR}"
 
-# 1. 🔥 [物理清算] 彻底清除 24.10 的 ImageBuilder 缓存元数据
-# 24.10 的元数据存储在 json 和 tmp 目录，必须物理抹除以防识别旧指纹
-rm -rf bin/targets/mediatek/filogic/*
-rm -rf tmp/.config-target.in
-find build_dir/target-* -name "*.json" -delete || true
-find build_dir/target-* -name ".image_done" -delete || true
-# 清理旧 ID 遗迹
-find build_dir/ -name "*sl3000*" -exec rm -rf {} + || true
+echo -e "\033[32m🚀 [SL3000] 执行 24.10 物理适配...\033[0m"
 
-# 2. 🔥 [物理重建 .config] 
+# 1. 🔥 [物理路径预检] 
+# 如果 Makefile 不存在，说明 feeds 还没准备好，强制报错停止，防止生成“残废”固件
+DTS_MAKEFILE="target/linux/mediatek/dts/Makefile"
+if [ ! -f "$DTS_MAKEFILE" ]; then
+    echo -e "\033[31m❌ 错误: 找不到 $DTS_MAKEFILE，请确保脚本在 openwrt 根目录运行且 feeds 已安装。\033[0m"
+    exit 1
+fi
+
+# 2. 🔥 [物理清算] 
+rm -rf bin/targets/mediatek/filogic/*
+# 忽略初次编译时 build_dir 不存在的报错
+find build_dir/ -name "*sl3000*" -exec rm -rf {} + 2>/dev/null || true
+
+# 3. 🔥 [物理注入并注册 DTS] 
+TARGET_DTS="mt7981b-3000-emmc.dts"
+DTS_DEST="target/linux/mediatek/dts"
+
+if [ -f "${SRC_DIR}/${TARGET_DTS}" ]; then
+    cp -fv "${SRC_DIR}/${TARGET_DTS}" "$DTS_DEST/"
+    DTS_NAME="${TARGET_DTS%.*}"
+    # 物理去重注册：确保 Makefile 里只有一行
+    sed -i "/$DTS_NAME/d" "$DTS_MAKEFILE"
+    echo "dtb-\$(CONFIG_TARGET_mediatek_filogic) += $DTS_NAME.dtb" >> "$DTS_MAKEFILE"
+    echo "✅ DTS 物理注册成功: $DTS_NAME"
+fi
+
+# 4. 🔥 [物理配置锁定] 
 rm -f .config
 {
     echo "CONFIG_TARGET_mediatek=y"
@@ -26,65 +49,16 @@ rm -f .config
     echo "CONFIG_TARGET_mediatek_filogic_DEVICE_3000-emmc=y"
     echo "CONFIG_TARGET_KERNEL_PARTSIZE=128"
     echo "CONFIG_TARGET_ROOTFS_PARTSIZE=1024"
-    echo "CONFIG_TARGET_ROOTFS_SQUASHFS=y"
-    echo "CONFIG_TARGET_IMAGES_GZIP=y"
-    # 24.10 必须物理锁定分区名，否则 sysupgrade 找不到挂载点
     echo "CONFIG_TARGET_ROOTFS_PARTNAME=\"rootfs\""
-    echo "CONFIG_PACKAGE_kmod-mmc=y"
-    echo "CONFIG_PACKAGE_kmod-sdhci-mtk=y"
     echo "CONFIG_PACKAGE_kmod-fs-f2fs=y"
     echo "CONFIG_PACKAGE_f2fs-tools=y"
-    echo "CONFIG_PACKAGE_f2fsck=y"
-    echo "CONFIG_PACKAGE_parted=y"
-    echo "CONFIG_PACKAGE_lsblk=y"
-    echo "CONFIG_PACKAGE_blkid=y"
-    echo "CONFIG_PACKAGE_block-mount=y"
-    # 物理增加 GPT 磁盘管理支持，确保 eMMC 分区表识别
-    echo "CONFIG_PACKAGE_fdisk=y"
     echo "CONFIG_PACKAGE_gptfdisk=y"
-    echo "CONFIG_PACKAGE_kmod-zram=y"
-    echo "CONFIG_PACKAGE_zram-swap=y"
-    echo "CONFIG_PACKAGE_luci=y"
-    echo "CONFIG_PACKAGE_luci-theme-bootstrap=y"
-    echo "CONFIG_PACKAGE_curl=y"
-    echo "CONFIG_PACKAGE_wget-ssl=y"
-    echo "CONFIG_PACKAGE_htop=y"
-    echo "CONFIG_PACKAGE_nano=y"
-    # 物理禁用签名，防止新版固件因校验不通过被 Bootloader 拒收
-    echo "# CONFIG_SIGNED_PACKAGES is not set"
 } > .config
 
-# 3. 🔥 [物理注入 DTS] 适配 24.10 内核 6.6 编译链
-TARGET_DTS="mt7981b-3000-emmc.dts"
-# 物理路径：24.10 的 DTS 位于 target/linux/mediatek/dts/
-DTS_DEST="target/linux/mediatek/dts"
-mkdir -p "$DTS_DEST"
-
-if [ -f "${SRC_DIR}/${TARGET_DTS}" ]; then
-    echo "Injecting DTS: ${TARGET_DTS}"
-    cp -fv "${SRC_DIR}/${TARGET_DTS}" "$DTS_DEST/"
-    
-    # 🔥 24.10 核心修复：必须将自定义 DTS 注册进 target 的 Makefile 才能生成 .dtb
-    DTS_MAKEFILE="target/linux/mediatek/dts/Makefile"
-    DTS_NAME="${TARGET_DTS%.*}"
-    if ! grep -q "$DTS_NAME" "$DTS_MAKEFILE"; then
-        echo "Registering $DTS_NAME to $DTS_MAKEFILE"
-        echo "dtb-\$(CONFIG_TARGET_mediatek_filogic) += $DTS_NAME.dtb" >> "$DTS_MAKEFILE"
-    fi
-fi
-
-# 4. 🔥 [物理镜像 MK 修正] 
+# 5. 🔥 [物理覆盖 MK]
 if [ -f "${SRC_DIR}/filogic.mk" ]; then
-    echo "Injecting MK: filogic.mk"
-    mkdir -p target/linux/mediatek/image
     cp -fv "${SRC_DIR}/filogic.mk" target/linux/mediatek/image/filogic.mk
-    # 强制更新 Makefile 时间戳以触发解析
     touch target/linux/mediatek/image/filogic.mk
 fi
 
-# 5. 屏蔽签名校验 (24.10 增强版屏蔽)
-sed -i 's/$(STAGING_DIR_HOST)\/bin\/usign/true/g' package/Makefile || true
-sed -i 's/$(STAGING_DIR_HOST)\/bin\/ucert/true/g' package/Makefile || true
-sed -i 's/$(STAGING_DIR_HOST)\/bin\/usign/true/g' include/image.mk || true
-
-echo -e "\033[32m✅ 24.10 物理补丁注入完成，DTS 已注册并配置 GPT 支持。\033[0m"
+echo -e "\033[32m✅ 24.10 物理补丁注入完成。\033[0m"
