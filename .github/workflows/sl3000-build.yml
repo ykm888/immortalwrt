@@ -11,43 +11,33 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ========================
-      # 🔥 磁盘空间极致优化（新增）
-      # ========================
-      - name: "🧹 极致优化磁盘空间"
+      - name: "🚀 [物理自愈] 极致清理空间与环境补全"
         run: |
-          df -h
-          sudo rm -rf /usr/local/lib/android \
-                      /usr/share/dotnet \
-                      /usr/share/swift \
-                      /opt/ghc \
-                      /opt/hostedtoolcache \
-                      /var/lib/docker \
-                      /usr/local/share/powershell \
-                      /usr/local/.ghcup \
-                      /usr/lib/jvm \
-                      /usr/local/graalvm \
-                      /usr/local/.dotnet \
-                      /usr/local/share/vcpkg || true
-          sudo apt clean
-          sudo apt autoremove -y
-          df -h
-
-      - name: "🚀 环境物理自愈"
-        run: |
+          # 1. 物理移除无用的大型组件 (释放约 20GB+)
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache \
+                      /var/lib/docker /usr/local/share/powershell /usr/share/swift /usr/local/.ghcup \
+                      /usr/lib/jvm /usr/local/lib/node_modules /usr/local/bin/aliyun /usr/local/bin/azcopy || true
+          
+          # 2. 清理系统残余并补全 24.10 必需依赖
           sudo apt update
           sudo apt install -y build-essential clang flex bison gawk gettext \
             gettext-base git libncurses5-dev libssl-dev python3 python3-distutils \
             python3-pyelftools rsync unzip zlib1g-dev swig libpython3-dev \
             device-tree-compiler wget curl file tar bzip2 patch setserial \
             pkg-config qemu-utils libelf-dev python3-setuptools
+          
+          # 3. 物理优化：关闭交换文件并重新创建一个 12G 的高效 Swap 空间
           sudo swapoff -a || true
           sudo fallocate -l 12G /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
+          
+          # 4. 清理 apt 缓存
+          sudo apt autoremove --purge -y
+          sudo apt clean
 
       - name: "📂 Clone ImmortalWrt (24.10)"
         run: git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git openwrt
 
-      - name: "⚡ 物理缓存"
+      - name: "⚡ [物理缓存] 仅 dl 目录"
         uses: actions/cache@v4
         with:
           path: openwrt/dl
@@ -74,6 +64,7 @@ jobs:
         working-directory: ./openwrt
         run: |
           make defconfig
+          # 强制清理内核以应用 custom-config 下的补丁
           make target/linux/clean
           make -j$(nproc) || make -j1 V=s
           cp .config bin/targets/mediatek/filogic/3000-emmc.config || true
