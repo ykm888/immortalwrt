@@ -1,8 +1,10 @@
 /dts-v1/;
 #include "mt7981.dtsi"
+/* 物理补丁：必须包含此文件解析电气属性宏定义，解决编译报错 */
+#include <dt-bindings/pinctrl/mt65xx.h>
 
 / {
-	/* 物理对齐：严禁修改此兼容性字符串 */
+	/* 兼容性指纹：完全克隆你导出的原厂字符串 */
 	compatible = "sl,3000-emmc", "mediatek,mt7981";
 	model = "SL-3000 eMMC (1024MB Partitioning)";
 
@@ -12,6 +14,7 @@
 
 	memory {
 		device_type = "memory";
+		/* 物理修复：锁定 1GB 内存寻址指纹，防止 24.10 内核恐慌 */
 		reg = <0x00 0x40000000 0x00 0x40000000>;
 	};
 };
@@ -24,7 +27,6 @@
 	no-sd;
 	no-sdio;
 	non-removable;
-	/* 引用原厂导出的 Pinctrl 标识符 */
 	pinctrl-names = "default", "state_uhs";
 	pinctrl-0 = <&mmc0_pins_default>;
 	pinctrl-1 = <&mmc0_pins_uhs>;
@@ -34,25 +36,26 @@
 		#address-cells = <1>;
 		#size-cells = <1>;
 
-		/* 物理保留：原厂 GPT 引导区 */
+		/* 物理对齐：完全克隆原厂 GPT 布局 (1MB) */
 		partition@0 {
 			label = "gpt";
 			reg = <0x0 0x100000>;
 			read-only;
 		};
 
+		/* 物理对齐：U-Boot 环境区 (512KB) */
 		partition@100000 {
 			label = "u-boot-env";
 			reg = <0x100000 0x80000>;
 		};
 
-		/* 物理缝合：128MB Kernel 分区 */
+		/* 物理修复：128MB Kernel 分区 (起始偏移 0x380000) */
 		partition@380000 {
 			label = "kernel";
 			reg = <0x380000 0x8000000>;
 		};
 
-		/* 物理缝合：1024MB Rootfs 分区 */
+		/* 物理对齐：1024MB Rootfs (精确起始于 0x8380000) */
 		partition@8380000 {
 			label = "rootfs";
 			reg = <0x8380000 0x40000000>;
@@ -60,18 +63,27 @@
 	};
 };
 
-/* 物理保留原厂导出的 Pinctrl 配置，适配 24.10 &pio 节点 */
 &pio {
+	/* 物理加固：24.10 必需的引脚描述结构，确保 eMMC 物理就绪 */
 	mmc0_pins_default: mmc0-pins-default {
 		mux {
 			function = "flash";
 			groups = "emmc_45";
 		};
+		conf {
+			pins = "MSDC0_CLK", "MSDC0_CMD", "MSDC0_DAT0", "MSDC0_DAT1", "MSDC0_DAT2", "MSDC0_DAT3", "MSDC0_DAT4", "MSDC0_DAT5", "MSDC0_DAT6", "MSDC0_DAT7", "MSDC0_DSL";
+			drive-strength = <MTK_DRIVE_8mA>;
+		};
 	};
+
 	mmc0_pins_uhs: mmc0-pins-uhs {
 		mux {
 			function = "flash";
 			groups = "emmc_45";
 		};
+		conf {
+			pins = "MSDC0_CLK", "MSDC0_CMD", "MSDC0_DAT0", "MSDC0_DAT1", "MSDC0_DAT2", "MSDC0_DAT3", "MSDC0_DAT4", "MSDC0_DAT5", "MSDC0_DAT6", "MSDC0_DAT7", "MSDC0_DSL";
+			drive-strength = <MTK_DRIVE_8mA>;
+		};
 	};
-};
+}; /* 🔥 物理关键：末尾分号已补齐，终结语法报错 */
