@@ -2,12 +2,17 @@
 #include "mt7981.dtsi"
 
 / {
-	/* 物理锁定：必须与原厂导出字符串完全一致 */
+	/* 物理对齐：严禁修改此兼容性字符串 */
 	compatible = "sl,3000-emmc", "mediatek,mt7981";
 	model = "SL-3000 eMMC (1024MB Partitioning)";
 
 	chosen {
 		bootargs = "console=ttyS0,115200n1 loglevel=8 root=PARTLABEL=rootfs rootwait rootfstype=squashfs,f2fs";
+	};
+
+	memory {
+		device_type = "memory";
+		reg = <0x00 0x40000000 0x00 0x40000000>;
 	};
 };
 
@@ -19,6 +24,7 @@
 	no-sd;
 	no-sdio;
 	non-removable;
+	/* 引用原厂导出的 Pinctrl 标识符 */
 	pinctrl-names = "default", "state_uhs";
 	pinctrl-0 = <&mmc0_pins_default>;
 	pinctrl-1 = <&mmc0_pins_uhs>;
@@ -28,7 +34,7 @@
 		#address-cells = <1>;
 		#size-cells = <1>;
 
-		/* 物理保留：引导区边界 */
+		/* 物理保留：原厂 GPT 引导区 */
 		partition@0 {
 			label = "gpt";
 			reg = <0x0 0x100000>;
@@ -40,13 +46,13 @@
 			reg = <0x100000 0x80000>;
 		};
 
-		/* 物理修复：扩容 Kernel (128MB) */
+		/* 物理缝合：128MB Kernel 分区 */
 		partition@380000 {
 			label = "kernel";
 			reg = <0x380000 0x8000000>;
 		};
 
-		/* 物理修复：扩容 Rootfs (1024MB) */
+		/* 物理缝合：1024MB Rootfs 分区 */
 		partition@8380000 {
 			label = "rootfs";
 			reg = <0x8380000 0x40000000>;
@@ -54,7 +60,7 @@
 	};
 };
 
-/* 物理保留原厂导出的 LED 逻辑 */
+/* 物理保留原厂导出的 Pinctrl 配置，适配 24.10 &pio 节点 */
 &pio {
 	mmc0_pins_default: mmc0-pins-default {
 		mux {
