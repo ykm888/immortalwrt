@@ -4,11 +4,10 @@ define Device/sl3000-emmc
   DEVICE_ALT0_VENDOR := SL
   DEVICE_ALT0_MODEL := SL3000
   DEVICE_ALT0_VARIANT := eMMC 1024MB Rootfs
-  # 物理修正：去掉多余的 sl- 前缀，确保与内核编译寻找的文件名 100% 对齐
   DEVICE_DTS := mt7981b-3000-emmc
   DEVICE_DTS_DIR := $(DTS_DIR)/mediatek
-  # 物理对齐：这是官方认可的刷机校验标识
-  SUPPORTED_DEVICES := sl,3000-emmc mediatek,mt7981
+  # 🔥 物理补全：同时包含 3000 和 sl3000，解决“镜像检查失败”
+  SUPPORTED_DEVICES := sl,3000-emmc sl,sl3000-emmc mediatek,mt7981
   KERNEL_SIZE := 131072k
   BOARD_ROOTFS_PARTSIZE := 1024
   KERNEL := kernel-bin | lzma | append-dtb
