@@ -55,16 +55,16 @@ jobs:
       - name: Build Firmware
         working-directory: ./openwrt
         run: |
-          # 🔥 [物理清算] 强制删除缓存中可能残留的旧 ID (sl3000) 固件产物
+          # 🔥 [物理清算] 彻底抹除旧固件产物，防止上传旧文件
           rm -rf bin/targets/mediatek/filogic/*
-          # 🔥 [物理强制] 清除内核编译索引，强制应用 1024MB 分区表和新 ID
+          # 🔥 [物理强制] 强制内核重编，应用 1024MB 和新 ID 3000-emmc
           make target/linux/clean FORCE=1
           
           make target/linux/compile -j$(nproc) FORCE=1
           make package/compile -j$(nproc) FORCE=1
           make package/install -j$(nproc) FORCE=1
           
-          # 🔥 严格对齐：设备标识已物理锁定为 3000-emmc
+          # 🔥 严格对齐：设备名物理锁定为 3000-emmc
           make target/linux/install -j1 V=s DEVICE_3000-emmc=y \
             CONFIG_TARGET_KERNEL_PARTSIZE=128 \
             CONFIG_TARGET_ROOTFS_PARTSIZE=1024 IGNORE_ERRORS=1 FORCE=1
