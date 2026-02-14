@@ -7,7 +7,7 @@ WORKDIR="${REPO_ROOT}/openwrt"
 # 物理修正：指向你真实的 custom-config 目录
 SRC_DIR="${REPO_ROOT}/custom-config"
 
-echo -e "\033[32m🚀 [SL3000] 执行 24.10 物理适配（路径对齐版）...\033[0m"
+echo -e "\033[32m🚀 [SL3000] 执行 24.10 物理适配（物理尺寸对齐版）...\033[0m"
 
 # 2. 物理路径：适配 24.10 内核 6.6
 DTS_DEST="target/linux/mediatek/files-6.6/arch/arm64/boot/dts/mediatek"
@@ -21,15 +21,17 @@ echo "✅ 注入 DTS: ${DTS_DEST}/${DTS_NAME}.dts"
 cp -fv "${SRC_DIR}/${DTS_NAME}.dts" "${DTS_DEST}/"
 cp -fv "${SRC_DIR}/filogic.mk" "target/linux/mediatek/image/filogic.mk"
 
-# 4. 配置固化：使用覆盖模式，实现 128MB 内核与 1GB Rootfs 物理对齐
+# 4. 配置固化：物理锁定 128MB 内核与 128MB Rootfs (总计 256MB)
 {
     echo "CONFIG_TARGET_mediatek=y"
     echo "CONFIG_TARGET_mediatek_filogic=y"
     echo "CONFIG_TARGET_mediatek_filogic_DEVICE_3000-emmc=y"
 
     # 物理锁定数值 (单位: KB)
+    # 内核分区设为 128MB (131072KB)
     echo "CONFIG_TARGET_KERNEL_PARTSIZE=131072"
-    echo "CONFIG_TARGET_ROOTFS_PARTSIZE=1048576"
+    # 物理修正：Rootfs 分区设为 128MB (131072KB)，确保固件总大小约 256MB，U-Boot 完美兼容
+    echo "CONFIG_TARGET_ROOTFS_PARTSIZE=131072"
     echo "CONFIG_TARGET_ROOTFS_PARTNAME=\"rootfs\""
 
     echo "CONFIG_TARGET_ROOTFS_SQUASHFS=y"
@@ -65,4 +67,4 @@ cp -fv "${SRC_DIR}/filogic.mk" "target/linux/mediatek/image/filogic.mk"
 # 5. 屏蔽签名逻辑
 sed -i 's/$(STAGING_DIR_HOST)\/bin\/usign/true/g' package/Makefile || true
 
-echo -e "\033[32m✅ 24.10 物理注入完成。\033[0m"
+echo -e "\033[32m✅ 24.10 物理注入完成，数值已闭合。\033[0m"
