@@ -13,25 +13,18 @@ jobs:
 
       - name: "🚀 [物理自愈] 极致清理空间与环境补全"
         run: |
-          # 1. 物理移除无用组件 (彻底释放空间)
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache \
                       /var/lib/docker /usr/local/share/powershell /usr/share/swift /usr/local/.ghcup \
                       /usr/lib/jvm /usr/local/lib/node_modules /usr/local/bin/aliyun /usr/local/bin/azcopy || true
-          
-          # 2. 补全 24.10 必需依赖 (确保支持内核 6.6 和 U-Boot 编译)
           sudo apt update
           sudo apt install -y build-essential clang flex bison gawk gettext \
             gettext-base git libncurses5-dev libssl-dev python3 python3-distutils \
             python3-pyelftools rsync unzip zlib1g-dev swig libpython3-dev \
             device-tree-compiler wget curl file tar bzip2 patch setserial \
             pkg-config qemu-utils libelf-dev python3-setuptools
-          
-          # 3. 物理优化：扩容 Swap 以应对内核编译高峰 (12G)
           sudo swapoff -a || true
           sudo fallocate -l 12G /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
-          
-          sudo apt autoremove --purge -y
-          sudo apt clean
+          sudo apt autoremove --purge -y && sudo apt clean
 
       - name: "📂 Clone ImmortalWrt (24.10)"
         run: git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git openwrt
@@ -40,7 +33,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: openwrt/dl
-          key: ${{ runner.os }}-openwrt-dl-v2  # 物理修正：更新 key 名称以强制刷新
+          key: ${{ runner.os }}-openwrt-dl-v-final  # 强制刷新缓存
           restore-keys: ${{ runner.os }}-openwrt-dl-
 
       - name: Update Feeds
@@ -48,13 +41,11 @@ jobs:
         run: ./scripts/feeds update -a && ./scripts/feeds install -a
 
       - name: Run patch script
-        # 物理修正：确保能够正确引用 custom-config 下的脚本
         env:
           GITHUB_WORKSPACE: ${{ github.workspace }}
         run: |
-          # 假设你的脚本在 custom-config 目录下
-          chmod +x custom-config/sl3000-patch.sh
-          ./custom-config/sl3000-patch.sh
+          chmod +x scripts/sl3000-patch.sh
+          ./scripts/sl3000-patch.sh
 
       - name: Build Toolchain
         working-directory: ./openwrt
@@ -66,26 +57,40 @@ jobs:
       - name: Build Firmware
         working-directory: ./openwrt
         run: |
-          # 1. 物理刷新：应用 patch 写入的 .config
           make defconfig
-          # 2. 核心补丁：强制清理内核以应用 128MB 偏移规则
-          make target/linux/clean
-          # 3. 正式构建：自动产出 256MB 固件及 U-Boot
+          make target/linux/clean  # 物理关键：强制内核重编，应用 128MB 偏移
           make -j$(nproc) || make -j1 V=s
           cp .config bin/targets/mediatek/filogic/3000-emmc.config || true
 
-      - name: Upload firmware
+      - name: Upload firmware to Artifacts
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: SL3000-Complete-Firmware
+          name: SL3000-Final-Artifacts
           path: openwrt/bin/targets/mediatek/filogic/
 
-      - name: "🚢 自动发布"
+      - name: "🧹 [物理清理] 删除所有旧版 Release"
+        if: success()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          releases=$(gh release list --limit 100 | cut -f1)
+          for tag in $releases; do
+            echo "🗑️ 正在删除旧发布: $tag"
+            gh release delete "$tag" --yes --cleanup-tag || true
+          done
+
+      - name: "🚢 自动发布最新版"
         if: success()
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: SL3000-v24.10-${{ github.run_id }}
+          tag_name: SL3000-v24.10-Final
+          name: "SL3000 24.10 物理对齐最终版"
+          body: |
+            ### 🛠️ 彻底解决清单
+            - **物理对齐**: 内核 128MB / Rootfs 128MB (总计 256MB)
+            - **U-Boot**: 包含同步生成的专属 U-Boot 固件
+            - **环境**: 完整继承自原始工程体系
           files: |
             openwrt/bin/targets/mediatek/filogic/*.bin
             openwrt/bin/targets/mediatek/filogic/*.config
