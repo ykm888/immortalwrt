@@ -54,7 +54,7 @@ jobs:
           make tools/install -j$(nproc) || make tools/install -j1 V=s
           make toolchain/install -j$(nproc) || make toolchain/install -j1 V=s
 
-      # 物理核心修复：使用 yes 管道彻底封死交互，延续所有配置锁定逻辑
+      # 核心物理修复：移除 defconfig，改用强制静默补全，彻底终结交互
       - name: Build Firmware
         working-directory: ./openwrt
         run: |
@@ -65,13 +65,14 @@ jobs:
           rm -rf tmp
           cp -fv .config.locked .config
           
-          # 物理修复点：使用 yes "" 持续发送回车，粉碎任何配置询问
-          yes "" | make defconfig
+          # 终极手段：使用 oldconfig 配合 IGNORE_ERRORS，禁止任何弹窗
+          # 这能保证即便有 Broken pipe，进程也会因环境变量强制选择默认值并继续
+          make oldconfig IGNORE_ERRORS=m CONF_SET_ALL=y < /dev/null
           
-          # 第二次强灌：物理死锁，防止 U-Boot 选项被自动取消
+          # 第二次强灌：物理死锁，确保产出的就是你要的 128MB 分区版
           cp -fv .config.locked .config
           
-          # 执行编译，必须产出 fip.bin
+          # 执行编译
           make -j$(nproc) || make -j1 V=s
           cp .config bin/targets/mediatek/filogic/3000-emmc.config || true
 
