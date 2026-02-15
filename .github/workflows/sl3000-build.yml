@@ -54,7 +54,7 @@ jobs:
           make tools/install -j$(nproc) || make tools/install -j1 V=s
           make toolchain/install -j$(nproc) || make toolchain/install -j1 V=s
 
-      # 物理核心修复：严格原文照抄，仅添加 < /dev/null 解决卡死问题
+      # 物理核心修复：使用 yes 管道彻底封死交互，延续所有配置锁定逻辑
       - name: Build Firmware
         working-directory: ./openwrt
         run: |
@@ -65,8 +65,8 @@ jobs:
           rm -rf tmp
           cp -fv .config.locked .config
           
-          # 非交互式补全 (此处为唯一补丁点)
-          make defconfig < /dev/null
+          # 物理修复点：使用 yes "" 持续发送回车，粉碎任何配置询问
+          yes "" | make defconfig
           
           # 第二次强灌：物理死锁，防止 U-Boot 选项被自动取消
           cp -fv .config.locked .config
