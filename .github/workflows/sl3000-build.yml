@@ -50,23 +50,22 @@ jobs:
       - name: Build Toolchain
         working-directory: ./openwrt
         run: |
-          # 物理锁定：在 defconfig 前强制同步配置备份
-          cp -fv .config.locked .config || true
+          cp -fv .config.locked .config
           make defconfig
-          # 物理锁定：防止 defconfig 删掉 U-Boot 开关
-          cp -fv .config.locked .config || true
-          
           make tools/install -j$(nproc) || make tools/install -j1 V=s
           make toolchain/install -j$(nproc) || make toolchain/install -j1 V=s
 
       - name: Build Firmware
         working-directory: ./openwrt
         run: |
-          # 物理死锁：确保编译内核前配置依然是我们的 128MB 偏移版
+          # 物理死锁：清除缓存索引并执行二次强灌
+          rm -rf tmp
           cp -fv .config.locked .config
           make defconfig
+          # 再次强灌，夺回由 defconfig 修正导致的 U-Boot 丢失和偏移回滚
           cp -fv .config.locked .config
           
+          # 强制清理内核，确保 DTS 重新物理合入
           make target/linux/clean
           make -j$(nproc) || make -j1 V=s
           cp .config bin/targets/mediatek/filogic/3000-emmc.config || true
@@ -75,19 +74,9 @@ jobs:
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: SL3000-Final-Artifacts
-          # 物理修正：使用 ** 递归穿透所有子目录，确保 uboot/ 文件夹下的 fip.bin 被抓取
+          name: SL3000-Final-Physical-Locked
+          # 物理递归：确保抓取 uboot 子目录下的 fip.bin
           path: openwrt/bin/targets/mediatek/filogic/**
-
-      - name: Delete Old Releases
-        if: success()
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          releases=$(gh release list --limit 100 | cut -f1)
-          for tag in $releases; do
-            gh release delete "$tag" --yes --cleanup-tag || true
-          done
 
       - name: Auto Release
         if: success()
@@ -97,8 +86,7 @@ jobs:
           name: "SL3000 24.10 Final"
           body: |
             Physical Alignment: Kernel 128MB / Rootfs 128MB
-            Verified Files: fip.bin (U-Boot), sysupgrade.bin (148MB)
+            Verified: Full Image Offset Lock Applied.
           files: |
-            # 物理修正：递归上传所有子目录下的 bin 和 config
             openwrt/bin/targets/mediatek/filogic/**/*.bin
             openwrt/bin/targets/mediatek/filogic/**/*.config
