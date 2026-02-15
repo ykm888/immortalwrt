@@ -58,8 +58,8 @@ jobs:
           rm -rf tmp
           cp -fv .config.locked .config
           
-          # 非交互式补全 (彻底解决 Error opening terminal)
-          make defconfig
+          # 物理截断交互：加上 < /dev/null 彻底防止卡死2小时
+          make defconfig < /dev/null
           
           # 第二次强灌：物理死锁，防止 U-Boot 选项被自动取消
           cp -fv .config.locked .config
