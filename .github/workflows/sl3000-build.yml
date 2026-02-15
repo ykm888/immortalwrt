@@ -1,7 +1,7 @@
 name: Build_SL3000
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:  # 物理锁定：仅允许手动触发，禁止一切自动构建
 
 jobs:
   build:
@@ -58,7 +58,7 @@ jobs:
           rm -rf tmp
           cp -fv .config.locked .config
           
-          # 物理截断交互：加上 < /dev/null 彻底防止卡死2小时
+          # 物理截断交互：加上 < /dev/null 彻底防止卡死和 Terminal 报错
           make defconfig < /dev/null
           
           # 第二次强灌：物理死锁，防止 U-Boot 选项被自动取消
