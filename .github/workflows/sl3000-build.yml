@@ -54,10 +54,17 @@ jobs:
           make tools/install -j$(nproc) || make tools/install -j1 V=s
           make toolchain/install -j$(nproc) || make toolchain/install -j1 V=s
 
+      # 物理修复点：在编译固件时执行“二次强灌”，防止 U-Boot 消失和分区回滚
       - name: Build Firmware
         working-directory: ./openwrt
         run: |
+          # 物理锁定：强制恢复 patch 脚本生成的 128MB 偏移配置
+          rm -rf tmp
+          cp -fv .config.locked .config
           make defconfig
+          # 再次强灌：彻底锁死，防止 defconfig 篡改
+          cp -fv .config.locked .config
+          
           make target/linux/clean
           make -j$(nproc) || make -j1 V=s
           cp .config bin/targets/mediatek/filogic/3000-emmc.config || true
@@ -67,7 +74,8 @@ jobs:
         if: always()
         with:
           name: SL3000-Final-Artifacts
-          path: openwrt/bin/targets/mediatek/filogic/
+          # 物理修复：递归匹配以确保抓取 fip.bin
+          path: openwrt/bin/targets/mediatek/filogic/**
 
       - name: Delete Old Releases
         if: success()
@@ -88,5 +96,5 @@ jobs:
           body: |
             Physical Alignment: Kernel 128MB / Rootfs 128MB
           files: |
-            openwrt/bin/targets/mediatek/filogic/*.bin
-            openwrt/bin/targets/mediatek/filogic/*.config
+            openwrt/bin/targets/mediatek/filogic/**/*.bin
+            openwrt/bin/targets/mediatek/filogic/**/*.config
