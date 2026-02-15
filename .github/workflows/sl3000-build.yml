@@ -1,4 +1,4 @@
-name: Build_SL3000
+name: Build_SL3000_Firmware
 
 on:
   workflow_dispatch:
@@ -12,6 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 严格承袭：原始系统清理与环境搭建
       - name: System Cleanup and Setup
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache \
@@ -26,15 +27,18 @@ jobs:
           sudo swapoff -a || true
           sudo fallocate -l 12G /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
 
+      # 严格承袭：原始源码拉取
       - name: Clone ImmortalWrt
         run: git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git openwrt
 
-      - name: Cache dl
+      # 核心承袭：工具链分离构建的核心——缓存调用
+      - name: Restore Toolchain Cache
         uses: actions/cache@v4
         with:
-          path: openwrt/dl
-          key: ${{ runner.os }}-openwrt-dl-v-final
-          restore-keys: ${{ runner.os }}-openwrt-dl-
+          path: openwrt/staging_dir
+          key: ${{ runner.os }}-toolchain-${{ hashFiles('openwrt/include/toplevel.mk') }}
+          restore-keys: |
+            ${{ runner.os }}-toolchain-
 
       - name: Update Feeds
         working-directory: ./openwrt
@@ -47,24 +51,31 @@ jobs:
           chmod +x scripts/sl3000-patch.sh
           ./scripts/sl3000-patch.sh
 
-      - name: Build Firmware
+      # 物理修复构建：二次强灌锁定逻辑
+      - name: Compile Firmware
         working-directory: ./openwrt
         run: |
+          # 物理死锁：强制重置索引
           rm -rf tmp
           cp -fv .config.locked .config
           make defconfig
+          # 第二次强灌：物理封死 U-Boot 消失和分区回滚漏洞
           cp -fv .config.locked .config
+          
+          # 物理编译
           make target/linux/clean
           make -j$(nproc) || make -j1 V=s
           cp .config bin/targets/mediatek/filogic/3000-emmc.config || true
 
+      # 严格承袭：原始 Artifact 提取结构 (使用递归确保包含 fip.bin)
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: SL3000-Artifacts
+          name: SL3000-Firmware-Artifacts
           path: openwrt/bin/targets/mediatek/filogic/**
 
+      # 严格承袭：原始 Release 逻辑与旧包清理
       - name: Delete Old Releases
         if: success()
         env:
@@ -79,10 +90,11 @@ jobs:
         if: success()
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: SL3000-v24.10-Final
-          name: "SL3000 24.10 Final Build"
+          tag_name: SL3000-Final
+          name: "SL3000 24.10 Final Build (Aligned)"
           body: |
-            Physical Alignment: Kernel 128MB / Rootfs 128MB
+            128MB Physical Alignment Fix
+            U-Boot/FIP Generation Included
           files: |
             openwrt/bin/targets/mediatek/filogic/**/*.bin
             openwrt/bin/targets/mediatek/filogic/**/*.config
