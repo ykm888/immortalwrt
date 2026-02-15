@@ -1,33 +1,25 @@
-#!/bin/bash
-set -eo pipefail
+define Device/3000-emmc
+  DEVICE_VENDOR := SL
+  DEVICE_MODEL := 3000-eMMC
+  DEVICE_ALT0_VENDOR := SL
+  DEVICE_ALT0_MODEL := SL3000
+  SUPPORTED_DEVICES := sl,3000-emmc 3000-emmc sl3000-emmc mediatek,mt7981
+  DEVICE_COMPAT_VERSION := 1.0
 
-REPO_ROOT="${GITHUB_WORKSPACE}"
-WORKDIR="${REPO_ROOT}/openwrt"
-SRC_DIR="${REPO_ROOT}/custom-config"
+  DEVICE_DTS := mt7981b-3000-emmc
+  DEVICE_DTS_DIR := $(DTS_DIR)/mediatek
 
-echo -e "\033[32m🚀 [SL3000] 执行物理适配 (全量承袭，严禁偷工减料)...\033[0m"
+  # 物理偏移锁定
+  KERNEL_SIZE := 134217728
+  IMAGE_SIZE := 268435456
 
-DTS_DEST="target/linux/mediatek/files-6.6/arch/arm64/boot/dts/mediatek"
-mkdir -p "$WORKDIR/$DTS_DEST"
-cp -fv "${SRC_DIR}/mt7981b-3000-emmc.dts" "$WORKDIR/$DTS_DEST/"
-cp -fv "${SRC_DIR}/filogic.mk" "$WORKDIR/target/linux/mediatek/image/filogic.mk"
+  KERNEL := kernel-bin | lzma | append-dtb
+  DEVICE_PACKAGES := kmod-mmc kmod-mtk-sd kmod-fs-f2fs f2fs-tools f2fsck \
+                    parted lsblk blkid block-mount kmod-zram zram-swap \
+                    kmod-gpt kmod-part-msdos
 
-cd "$WORKDIR"
-
-{
-    echo "CONFIG_TARGET_mediatek=y"
-    echo "CONFIG_TARGET_mediatek_filogic=y"
-    echo "CONFIG_TARGET_mediatek_filogic_DEVICE_3000-emmc=y"
-    echo "CONFIG_PACKAGE_uboot-mediatek-mt7981_sl-3000-emmc=y"
-    echo "CONFIG_TARGET_IMAGE_uboot-mediatek-mt7981_sl-3000-emmc=y"
-    echo "CONFIG_PACKAGE_mtk-bmt-mtd=y"
-    echo "CONFIG_TARGET_KERNEL_PARTSIZE=131072"
-    echo "CONFIG_TARGET_ROOTFS_PARTSIZE=131072"
-    echo "CONFIG_TARGET_ROOTFS_PARTNAME=\"rootfs\""
-    echo "CONFIG_PACKAGE_kmod-mtk-sd=y"
-    echo "CONFIG_PACKAGE_kmod-gpt=y"
-    echo "CONFIG_PACKAGE_kmod-part-msdos=y"
-    echo "CONFIG_PACKAGE_luci=y"
-} >> .config
-
-cp -fv .config .config.locked
+  IMAGES := sysupgrade.bin
+  # 物理死锁核心：强制填充至 128MB
+  IMAGE/sysupgrade.bin := append-kernel | pad-to 134217728 | append-rootfs | check-size | append-metadata
+endef
+TARGET_DEVICES += 3000-emmc
