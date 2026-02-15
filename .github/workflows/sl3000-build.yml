@@ -29,13 +29,6 @@ jobs:
       - name: Clone ImmortalWrt
         run: git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git openwrt
 
-      - name: Cache dl
-        uses: actions/cache@v4
-        with:
-          path: openwrt/dl
-          key: ${{ runner.os }}-openwrt-dl-v-final
-          restore-keys: ${{ runner.os }}-openwrt-dl-
-
       - name: Update Feeds
         working-directory: ./openwrt
         run: ./scripts/feeds update -a && ./scripts/feeds install -a
@@ -54,24 +47,24 @@ jobs:
           make tools/install -j$(nproc) || make tools/install -j1 V=s
           make toolchain/install -j$(nproc) || make toolchain/install -j1 V=s
 
-      # 核心修复点：通过调整顺序和强制非交互，彻底解决“Error opening terminal”
+      # 物理核心修复：移除 clean，屏蔽交互，双重锁定 128MB 分区
       - name: Build Firmware
         working-directory: ./openwrt
         run: |
-          # 1. 先进行物理清理 (防止后续触发 menuconfig)
-          make target/linux/clean
+          export TERM=dumb
+          export DEBIAN_FRONTEND=noninteractive
           
-          # 2. 物理锁定：强制恢复 patch 脚本生成的 128MB 偏移配置
+          # 第一次强灌锁定配置
           rm -rf tmp
           cp -fv .config.locked .config
           
-          # 3. 自动补全：使用 defconfig (严禁使用交互式的 menuconfig)
+          # 非交互式补全 (彻底解决 Error opening terminal)
           make defconfig
           
-          # 4. 再次强灌：彻底锁死，防止 U-Boot 消失和分区回滚
+          # 第二次强灌：物理死锁，防止 U-Boot 选项被自动取消
           cp -fv .config.locked .config
           
-          # 5. 正式执行并行编译
+          # 执行编译，必须产出 fip.bin
           make -j$(nproc) || make -j1 V=s
           cp .config bin/targets/mediatek/filogic/3000-emmc.config || true
 
@@ -80,28 +73,19 @@ jobs:
         if: always()
         with:
           name: SL3000-Final-Artifacts
-          # 物理修复：递归匹配以确保抓取 fip.bin (U-Boot)
           path: openwrt/bin/targets/mediatek/filogic/**
-
-      - name: Delete Old Releases
-        if: success()
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          releases=$(gh release list --limit 100 | cut -f1)
-          for tag in $releases; do
-            gh release delete "$tag" --yes --cleanup-tag || true
-          done
 
       - name: Auto Release
         if: success()
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: SL3000-v24.10-Final
-          name: "SL3000 24.10 Final"
+          tag_name: SL3000-Final-Ready
+          name: "SL3000 最终修复版 (请先刷 fip.bin)"
           body: |
-            Physical Alignment: Kernel 128MB / Rootfs 128MB
-            Storage: eMMC Optimised (F2FS)
+            ### ⚠️ 重要刷机指南
+            1. 下载 `fip.bin`。
+            2. 在 U-Boot 中点击 'U-BOOT UPDATE' 刷入 `fip.bin`。
+            3. 重启后，点击 'FIRMWARE UPDATE' 刷入 `sysupgrade.bin`。
           files: |
             openwrt/bin/targets/mediatek/filogic/**/*.bin
             openwrt/bin/targets/mediatek/filogic/**/*.config
