@@ -3,7 +3,7 @@
 
 / {
 	compatible = "sl,3000-emmc", "mediatek,mt7981";
-	model = "SL-3000 eMMC (23.05 Physical Aligned)";
+	model = "SL-3000 eMMC (Physical Aligned 128MB Offset)";
 
 	chosen {
 		bootargs = "console=ttyS0,115200n1 loglevel=8 root=PARTLABEL=rootfs rootwait rootfstype=squashfs,f2fs";
@@ -19,7 +19,8 @@
 	status = "okay";
 	bus-width = <8>;
 	cap-mmc-highspeed;
-	max-frequency = <26000000>;
+	# 物理优化：提升 eMMC 频率至 52MHz，解决 128MB 镜像加载慢的问题
+	max-frequency = <52000000>;
 	no-sd;
 	no-sdio;
 	non-removable;
@@ -49,11 +50,13 @@
 			read-only;
 		};
 
+		# 物理死锁点：内核分区 128MB (0x8000000)
 		partition@380000 {
 			label = "kernel";
 			reg = <0x380000 0x8000000>;
 		};
 
+		# 物理死锁点：Rootfs 紧随其后 (0x380000 + 0x8000000 = 0x8380000)
 		partition@8380000 {
 			label = "rootfs";
 			reg = <0x8380000 0x40000000>;
