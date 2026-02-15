@@ -19,7 +19,7 @@
 	status = "okay";
 	bus-width = <8>;
 	cap-mmc-highspeed;
-	# 物理优化：提升 eMMC 频率至 52MHz，解决 128MB 镜像加载慢的问题
+	# 物理修复：提升频率至 52MHz，解决大镜像引导时的读取性能瓶颈
 	max-frequency = <52000000>;
 	no-sd;
 	no-sdio;
@@ -50,13 +50,13 @@
 			read-only;
 		};
 
-		# 物理死锁点：内核分区 128MB (0x8000000)
+		# 物理死锁点：内核分区必须为 128MB (0x8000000)
 		partition@380000 {
 			label = "kernel";
 			reg = <0x380000 0x8000000>;
 		};
 
-		# 物理死锁点：Rootfs 紧随其后 (0x380000 + 0x8000000 = 0x8380000)
+		# 物理对齐点：Rootfs 起始地址 = 0x380000 + 0x8000000 = 0x8380000
 		partition@8380000 {
 			label = "rootfs";
 			reg = <0x8380000 0x40000000>;
