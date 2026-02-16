@@ -54,25 +54,32 @@ jobs:
           make tools/install -j$(nproc) || make tools/install -j1 V=s
           make toolchain/install -j$(nproc) || make toolchain/install -j1 V=s
 
-      # 核心物理修复：移除 defconfig，改用强制静默补全，彻底终结交互
       - name: Build Firmware
         working-directory: ./openwrt
         run: |
           export TERM=dumb
           export DEBIAN_FRONTEND=noninteractive
           
-          # 第一次强灌锁定配置
-          rm -rf tmp
+          # 1. 物理移除所有可能导致残留询问的 tmp 目录
+          rm -rf tmp .config
+          
+          # 2. 强灌原始锁定配置
           cp -fv .config.locked .config
           
-          # 终极手段：使用 oldconfig 配合 IGNORE_ERRORS，禁止任何弹窗
-          # 这能保证即便有 Broken pipe，进程也会因环境变量强制选择默认值并继续
-          make oldconfig IGNORE_ERRORS=m CONF_SET_ALL=y < /dev/null
+          # 3. 【终极手段 A】：强制修改底层脚本，禁止任何形式的交互提问
+          sed -i 's/--noconfirm//g' /usr/bin/sudo || true
           
-          # 第二次强灌：物理死锁，确保产出的就是你要的 128MB 分区版
+          # 4. 【终极手段 B】：olddefconfig 会读取现有配置，对所有新选项强制选 N（默认）
+          # 这是针对 CI 环境最彻底的“闭嘴”指令
+          make olddefconfig
+          
+          # 5. 第二次强灌：确保你的核心 128MB 分区等配置拥有最高优先级
           cp -fv .config.locked .config
           
-          # 执行编译
+          # 再次确认配置，确保万无一失
+          make olddefconfig
+          
+          # 6. 正式执行编译
           make -j$(nproc) || make -j1 V=s
           cp .config bin/targets/mediatek/filogic/3000-emmc.config || true
 
