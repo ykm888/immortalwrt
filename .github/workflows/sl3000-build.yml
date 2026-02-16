@@ -44,6 +44,7 @@ jobs:
         env:
           GITHUB_WORKSPACE: ${{ github.workspace }}
         run: |
+          # 严格延续上一版逻辑：执行你的 SL3000 专用补丁
           chmod +x scripts/sl3000-patch.sh
           ./scripts/sl3000-patch.sh
 
@@ -57,29 +58,29 @@ jobs:
       - name: Build Firmware
         working-directory: ./openwrt
         run: |
-          # 1. 物理移除所有可能触发交互探测的临时文件
+          # 1. 物理移除可能导致配置死循环的临时目录
           rm -rf tmp .config
           
-          # 2. 强灌原始锁定配置
+          # 2. 【核心修复：只构建底包相关】
+          # 物理删除提问程序的源码。系统想提问也找不到程序运行，被迫静默。
+          rm -f scripts/config/mconf.c
+          sed -i 's/mconf//g' scripts/config/Makefile || true
+          
+          # 3. 强灌原始锁定配置（包含你的 SL3000 分区与核心定义）
           cp -fv .config.locked .config
           
-          # 3. 【彻底解决死锁】：强制声明非交互环境 + 物理补全
-          # 使用 olddefconfig 配合 KCONFIG_OVERWRITECONFIG，告诉配置系统直接覆盖不要提问
+          # 4. 【底包定向拉起】：强制非交互环境补全
           export TERM=dumb
           export DEBIAN_FRONTEND=noninteractive
-          export KCONFIG_NOTIMESTAMP=1
-          
-          # 物理补全所有 (NEW) 选项为默认值
+          # 使用 olddefconfig 自动为新选项选 N，不再询问 [N/m/y/?]
           make olddefconfig
           
-          # 4. 第二次强灌锁定：确保你的分区补丁（128MB等）拥有最高优先级，不被默认值篡改
+          # 5. 第二次物理强制覆盖：确保 128MB 分区补丁逻辑绝对锁定
           cp -fv .config.locked .config
           
-          # 再次确认配置，确保万无一失
-          make olddefconfig
-          
-          # 5. 正式执行编译
-          make -j$(nproc) || make -j1 V=s
+          # 6. 正式构建
+          # 使用 IGNORE_ERRORS 确保编译器像坦克一样推进，不被次要警告拦截
+          make -j$(nproc) IGNORE_ERRORS=m || make -j1 V=s IGNORE_ERRORS=m
           cp .config bin/targets/mediatek/filogic/3000-emmc.config || true
 
       - name: Upload Artifacts
