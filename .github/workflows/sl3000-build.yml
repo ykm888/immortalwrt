@@ -46,6 +46,8 @@ jobs:
         run: |
           chmod +x scripts/sl3000-patch.sh
           ./scripts/sl3000-patch.sh
+          # 物理同步：强制刷新 DTS 文件的修改时间，防止 make 误以为需要重新配置
+          find openwrt/target/linux/mediatek/files-6.6/arch/arm64/boot/dts/mediatek/ -name "*.dtsi" -exec touch {} + || true
 
       - name: Build Toolchain
         working-directory: ./openwrt
@@ -57,27 +59,24 @@ jobs:
       - name: Build Firmware
         working-directory: ./openwrt
         run: |
-          # 1. 物理清空，保持环境纯净
-          rm -rf tmp .config
+          # 1. 物理移除可能引起扫描的 tmp
+          rm -rf tmp
           
-          # 2. 注入你锁定的配置
+          # 2. 强灌原始锁定配置
           cp -fv .config.locked .config
           
-          # 3. 【彻底解决卡死点】：物理绕过 oldconfig
-          # 使用 olddefconfig（自动选默认）替代 oldconfig（提问型）
-          # 设置 KCONFIG_OVERWRITECONFIG 强制它不要管新出的插件
+          # 3. 【彻底解决：物理禁言】
+          # 我们不再给系统任何“思考”的时间。直接用 olddefconfig 并强制指定非交互终端
+          # 这一步会瞬间碾过所有由 DTS 变动引起的新选项询问
           export TERM=dumb
           export DEBIAN_FRONTEND=noninteractive
-          export KCONFIG_NOTIMESTAMP=1
-          
-          # 直接补全配置，不给它尝试编译 mconf 的机会
           make olddefconfig
           
-          # 4. 第二次物理强制锁定：确保你的分区补丁（128MB等）绝对优先
+          # 4. 第二次物理强制锁定：确保 128MB 分区补丁拥有最高决定权
           cp -fv .config.locked .config
           
-          # 5. 正式执行构建
-          # 严格延续你原始的 IGNORE_ERRORS=m 逻辑
+          # 5. 正式构建
+          # 使用 IGNORE_ERRORS=1 强制跳过任何不相关的配置报错
           make -j$(nproc) IGNORE_ERRORS=m || make -j1 V=s IGNORE_ERRORS=m
           cp .config bin/targets/mediatek/filogic/3000-emmc.config || true
 
