@@ -57,26 +57,23 @@ jobs:
       - name: Build Firmware
         working-directory: ./openwrt
         run: |
-          export TERM=dumb
-          export DEBIAN_FRONTEND=noninteractive
-          
-          # 1. 物理移除所有可能导致残留询问的 tmp 目录
+          # 1. 物理清空，防止 tmp 目录下的锁定文件导致扫描死循环
           rm -rf tmp .config
           
           # 2. 强灌原始锁定配置
           cp -fv .config.locked .config
           
-          # 3. 【终极手段 A】：强制修改底层脚本，禁止任何形式的交互提问
-          sed -i 's/--noconfirm//g' /usr/bin/sudo || true
+          # 3. 【彻底解决卡死 - 终极手段】
+          # 使用环境变量强制声明为非交互终端，并配合 yes 指令无限回车
+          # 加上 IGNORE_ERRORS=1 防止配置脚本因为 Broken pipe 报错而停止
+          export TERM=dumb
+          export DEBIAN_FRONTEND=noninteractive
+          yes "" | make oldconfig IGNORE_ERRORS=1
           
-          # 4. 【终极手段 B】：olddefconfig 会读取现有配置，对所有新选项强制选 N（默认）
-          # 这是针对 CI 环境最彻底的“闭嘴”指令
-          make olddefconfig
-          
-          # 5. 第二次强灌：确保你的核心 128MB 分区等配置拥有最高优先级
+          # 4. 第二次物理强制覆盖：确保不论系统怎么补全，你的核心分区配置（128MB）必须锁定
           cp -fv .config.locked .config
           
-          # 再次确认配置，确保万无一失
+          # 5. 最后一次静默确认（不再回车，仅做最终校验）
           make olddefconfig
           
           # 6. 正式执行编译
