@@ -57,26 +57,28 @@ jobs:
       - name: Build Firmware
         working-directory: ./openwrt
         run: |
-          # 1. 物理清空，防止 tmp 目录下的锁定文件导致扫描死循环
+          # 1. 物理移除所有可能触发交互探测的临时文件
           rm -rf tmp .config
           
           # 2. 强灌原始锁定配置
           cp -fv .config.locked .config
           
-          # 3. 【彻底解决卡死 - 终极手段】
-          # 使用环境变量强制声明为非交互终端，并配合 yes 指令无限回车
-          # 加上 IGNORE_ERRORS=1 防止配置脚本因为 Broken pipe 报错而停止
+          # 3. 【彻底解决死锁】：强制声明非交互环境 + 物理补全
+          # 使用 olddefconfig 配合 KCONFIG_OVERWRITECONFIG，告诉配置系统直接覆盖不要提问
           export TERM=dumb
           export DEBIAN_FRONTEND=noninteractive
-          yes "" | make oldconfig IGNORE_ERRORS=1
+          export KCONFIG_NOTIMESTAMP=1
           
-          # 4. 第二次物理强制覆盖：确保不论系统怎么补全，你的核心分区配置（128MB）必须锁定
-          cp -fv .config.locked .config
-          
-          # 5. 最后一次静默确认（不再回车，仅做最终校验）
+          # 物理补全所有 (NEW) 选项为默认值
           make olddefconfig
           
-          # 6. 正式执行编译
+          # 4. 第二次强灌锁定：确保你的分区补丁（128MB等）拥有最高优先级，不被默认值篡改
+          cp -fv .config.locked .config
+          
+          # 再次确认配置，确保万无一失
+          make olddefconfig
+          
+          # 5. 正式执行编译
           make -j$(nproc) || make -j1 V=s
           cp .config bin/targets/mediatek/filogic/3000-emmc.config || true
 
