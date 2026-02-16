@@ -44,7 +44,6 @@ jobs:
         env:
           GITHUB_WORKSPACE: ${{ github.workspace }}
         run: |
-          # 物理延续：严格执行你原始的补丁脚本
           chmod +x scripts/sl3000-patch.sh
           ./scripts/sl3000-patch.sh
 
@@ -61,21 +60,24 @@ jobs:
           # 1. 物理清空，保持环境纯净
           rm -rf tmp .config
           
-          # 2. 强灌原始锁定配置（包含你的 SL3000 核心定义）
+          # 2. 注入你锁定的配置
           cp -fv .config.locked .config
           
-          # 3. 【延续修复点】：使用管道炸弹彻底解决 (NEW) 选项提问
-          # yes "" 会物理模拟“无限次按下回车”，确保所有新选项选默认值 N。
-          # 这种方式不删文件、不改源码，绝对不会触发 make Error 2。
+          # 3. 【彻底解决卡死点】：物理绕过 oldconfig
+          # 使用 olddefconfig（自动选默认）替代 oldconfig（提问型）
+          # 设置 KCONFIG_OVERWRITECONFIG 强制它不要管新出的插件
           export TERM=dumb
           export DEBIAN_FRONTEND=noninteractive
-          yes "" | make oldconfig
+          export KCONFIG_NOTIMESTAMP=1
           
-          # 4. 第二次锁定物理配置：确保你的分区补丁（128MB等）拥有最终覆盖权
+          # 直接补全配置，不给它尝试编译 mconf 的机会
+          make olddefconfig
+          
+          # 4. 第二次物理强制锁定：确保你的分区补丁（128MB等）绝对优先
           cp -fv .config.locked .config
           
           # 5. 正式执行构建
-          # 严格沿用你之前的 IGNORE_ERRORS=m 逻辑
+          # 严格延续你原始的 IGNORE_ERRORS=m 逻辑
           make -j$(nproc) IGNORE_ERRORS=m || make -j1 V=s IGNORE_ERRORS=m
           cp .config bin/targets/mediatek/filogic/3000-emmc.config || true
 
