@@ -4,62 +4,98 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  # 阶段一：核心工具链构建 (带缓存机制)
+  build_toolchain:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: 【体系延续】12GB Swap 与空间深度清理
+      - name: 体系延续：12GB Swap 与深度空间清理
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost /usr/local/lib/node_modules || true
           sudo apt update
           sudo apt install -y build-essential clang flex bison gawk gettext git libncurses5-dev libssl-dev python3 python3-pyelftools rsync unzip zlib1g-dev swig device-tree-compiler wget file tar bzip2 patch bc
           if [ ! -f /swapfile ]; then
             sudo fallocate -l 12G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=12288
-            sudo mkswap /swapfile
-            sudo swapon /swapfile
+            sudo mkswap /swapfile && sudo swapon /swapfile
           fi
 
-      - name: 克隆源码 (锁定 24.10 分支)
+      - name: 克隆源码 (锁定 24.10)
         run: git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git openwrt
 
-      - name: 更新 Feeds
-        working-directory: ./openwrt
-        run: ./scripts/feeds update -a && ./scripts/feeds install -a
+      - name: 核心工具链缓存 (物理死锁 staging_dir)
+        uses: actions/cache@v4
+        with:
+          path: openwrt/staging_dir
+          key: ${{ runner.os }}-toolchain-${{ hashFiles('openwrt/include/toplevel.mk') }}
 
-      - name: 🔥【放宽路径自愈】多级补丁物理死锁
+      - name: 构建核心工具链
         working-directory: ./openwrt
         run: |
+          ./scripts/feeds update -a && ./scripts/feeds install -a
+          cp -fv ../scripts/sl3000-patch.sh .
+          chmod +x sl3000-patch.sh && ./sl3000-patch.sh
+          cp -fv .config.locked .config
+          yes "" | make defconfig
+          make tools/install -j$(nproc)
+          make toolchain/install -j$(nproc)
+
+  # 阶段二：固件全链路构建 (继承工具链，物理强灌产物)
+  build_firmware:
+    needs: build_toolchain
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 体系延续：空间清理与 Swap
+        run: |
+          sudo rm -rf /usr/share/dotnet || true
+          sudo fallocate -l 12G /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
+          sudo apt update && sudo apt install -y build-essential clang flex bison gawk gettext git libncurses5-dev libssl-dev python3 python3-pyelftools rsync unzip zlib1g-dev swig device-tree-compiler wget file tar bzip2 patch bc
+
+      - name: 克隆源码 (锁定 24.10)
+        run: git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git openwrt
+
+      - name: 恢复工具链缓存
+        uses: actions/cache@v4
+        with:
+          path: openwrt/staging_dir
+          key: ${{ runner.os }}-toolchain-${{ hashFiles('openwrt/include/toplevel.mk') }}
+
+      - name: 执行物理补丁 (放宽路径注入)
+        working-directory: ./openwrt
+        run: |
+          ./scripts/feeds update -a && ./scripts/feeds install -a
           cp -fv ../scripts/sl3000-patch.sh .
           chmod +x sl3000-patch.sh
-          # 第一阶段：初始化 Kconfig 体系
           ./sl3000-patch.sh
           cp -fv .config.locked .config
           make defconfig
-          # 第二阶段：放宽路径物理注入 (核心报错修复)
+          # 物理修复：在固件打包前确保 build_dir 路径映射完成
           make target/linux/prepare -j$(nproc)
           ./sl3000-patch.sh
 
-      - name: 编译全链路 (物理强灌自愈)
+      - name: 编译全链路 (全链路自愈物理强灌)
         working-directory: ./openwrt
         run: |
           export TERM=dumb
           export DEBIAN_FRONTEND=noninteractive
-          # 最终纠偏分区单位 (体系延续)
+          # 编译前最后一秒强制物理覆盖 PARTSIZE
           sed -i 's/CONFIG_TARGET_KERNEL_PARTSIZE=.*/CONFIG_TARGET_KERNEL_PARTSIZE=131072/' .config
           sed -i 's/CONFIG_TARGET_ROOTFS_PARTSIZE=.*/CONFIG_TARGET_ROOTFS_PARTSIZE=1048576/' .config
           yes "" | make olddefconfig || true
           make -j$(nproc) || make -j1 V=s
 
-      - name: 产物提取 (自愈搜索)
+      - name: 产物物理搜索提取
         run: |
           mkdir -p OUTPUT
           find openwrt/bin/targets/mediatek/filogic/ -name "*sl3000-emmc*" -exec cp -v {} OUTPUT/ \;
           find openwrt/bin/targets/mediatek/filogic/ -name "*u-boot*" -exec cp -v {} OUTPUT/ \;
           find openwrt/bin/targets/mediatek/filogic/ -name "*fip*" -exec cp -v {} OUTPUT/ \;
 
-      - name: Release
+      - name: 自动发布
         uses: softprops/action-gh-release@v2
         if: success()
         with:
