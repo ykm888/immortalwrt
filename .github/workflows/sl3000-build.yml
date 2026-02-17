@@ -44,23 +44,18 @@ jobs:
         env:
           GITHUB_WORKSPACE: ${{ github.workspace }}
         run: |
+          # 1. 执行脚本 (脚本内已含 23.05 身份物理对齐逻辑)
           chmod +x scripts/sl3000-patch.sh
           ./scripts/sl3000-patch.sh
           
-          # 【核心修复：全自动名称匹配与物理对齐】
-          # 1. 自动从生成的配置中提取 Device ID (不论是 3000-emmc 还是 sl3000)
-          DEVICE_ID=$(grep "CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_" openwrt/.config.locked | sed 's/.*DEVICE_//;s/=y//')
-          echo "Detected Device ID from config: $DEVICE_ID"
-          
-          # 2. 物理校准：强制将源码中的所有可能冲突的名称对齐
-          # 这样即便 24.10 官方改了名字，也会被你的配置强行纠正
+          # 2. 工作流二次核验：提取并显示 ID
           cd openwrt
-          find target/linux/mediatek/image/ -name "*.mk" -exec sed -i "s/sl3000/$DEVICE_ID/g" {} + || true
-          find target/linux/mediatek/image/ -name "*.mk" -exec sed -i "s/SL3000/$DEVICE_ID/g" {} + || true
+          DEVICE_ID=$(grep "CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_" .config.locked | sed 's/.*DEVICE_//;s/=y//' || echo "")
+          if [ -z "$DEVICE_ID" ]; then DEVICE_ID="3000-emmc"; fi
+          echo "🎯 最终锁定的物理 ID: $DEVICE_ID"
           
-          # 3. 物理刷新 DTS 时间戳，防止重复扫描
-          find target/linux/mediatek/files-6.6/arch/arm64/boot/dts/mediatek/ -name "*.dts*" -exec touch {} + || true
-          echo "✅ 名称自动对齐修复完成"
+          # 3. 物理同步：强制刷新时间戳，防止 make 扫描
+          find target/linux/mediatek/files-6.6/ -name "*.dts*" -exec touch {} + || true
 
       - name: Build Toolchain
         working-directory: ./openwrt
@@ -72,24 +67,24 @@ jobs:
       - name: Build Firmware
         working-directory: ./openwrt
         run: |
-          # 1. 物理移除临时文件
+          # 1. 清理环境，注入锁定配置
           rm -rf tmp
-          
-          # 2. 强灌原始锁定配置
           cp -fv .config.locked .config
           
-          # 3. 【彻底解决卡死】：定向补全
-          # 使用 olddefconfig 并强制指定非交互终端，物理压制交互请求
+          # 2. 【核心物理修复】：物理禁言，解决 mconf 死锁
+          # 强制指定 dumb 终端并使用 olddefconfig 自动补全，不再弹出 [N/y/?]
           export TERM=dumb
           export DEBIAN_FRONTEND=noninteractive
           make olddefconfig
           
-          # 4. 第二次物理强制锁定：确保 128MB 分区补丁拥有最高决定权
+          # 3. 三次强灌：确保 128MB 分区偏移等关键补丁未被 olddefconfig 篡改
           cp -fv .config.locked .config
           
-          # 5. 正式构建
+          # 4. 执行构建
           make -j$(nproc) IGNORE_ERRORS=m || make -j1 V=s IGNORE_ERRORS=m
-          cp .config bin/targets/mediatek/filogic/*.config || true
+          
+          # 5. 备份配置到产物目录
+          cp .config bin/targets/mediatek/filogic/build_result.config || true
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
@@ -113,12 +108,12 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: SL3000-Final-Ready
-          name: "SL3000 最终修复版 (请先刷 fip.bin)"
+          name: "SL3000 24.10 最终修复版"
           body: |
-            ### ⚠️ 重要刷机指南
-            1. 下载 `fip.bin`。
-            2. 在 U-Boot 中点击 'U-BOOT UPDATE' 刷入 `fip.bin`。
-            3. 重启后，点击 'FIRMWARE UPDATE' 刷入 `sysupgrade.bin`。
+            ### 🛠️ 修复日志
+            - **身份对齐**：物理同步 23.05 DTS ID (`sl,3000-emmc`)。
+            - **分区锁定**：强制锁定 128MB (131072 KB) 偏移。
+            - **自动修复**：解决了 `mconf` 编译交互死锁问题。
           files: |
             openwrt/bin/targets/mediatek/filogic/**/*.bin
-            openwrt/bin/targets/mediatek/filogic/**/*.config
+            openwrt/bin/targets/mediatek/filogic/*.config
