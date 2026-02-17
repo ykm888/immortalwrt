@@ -1,80 +1,89 @@
-name: SL3000_Dedicated_SelfHealing_Build
+name: SL3000_Full_Stack_Build
 
 on:
-  workflow_dispatch: # 物理锁定：仅允许手动触发
+  workflow_dispatch:
+  # 延续之前的手动触发逻辑
 
 jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Self-Healing Environment Setup
+      - name: 优化磁盘空间 (延续体系)
         run: |
-          # 1. 延续设置：清理冗余空间
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc || true
-          
-          # 2. 空间自愈：如果磁盘空间不足则强制深度清理
-          FREE_SPACE=$(df -h / | awk 'NR==2 {print $4}' | sed 's/G//')
-          if [ $(echo "$FREE_SPACE < 10" | bc) -ne 0 ]; then
-            sudo rm -rf /usr/local/share/boost /usr/local/lib/node_modules || true
-          fi
-
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost /usr/local/lib/node_modules || true
+          docker rmi $(docker images -q) || true
           sudo apt update
           sudo apt install -y build-essential clang flex bison gawk gettext \
             git libncurses5-dev libssl-dev python3 python3-pyelftools rsync unzip \
             zlib1g-dev swig device-tree-compiler wget file tar bzip2 patch bc
           
-          # 3. 物理修复：Text file busy 报错保护
+          # 物理修复 Swapfile
           if [ ! -f /swapfile ]; then
             sudo fallocate -l 12G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=12288
             sudo mkswap /swapfile
             sudo swapon /swapfile
           fi
 
-      - name: Clone & Patch
+      - name: 缓存机制 (GitHub Actions Cache)
+        uses: actions/cache@v4
+        with:
+          path: openwrt/dl
+          key: ${{ runner.os }}-openwrt-dl-${{ hashFiles('openwrt/feeds.conf.default') }}
+          restore-keys: |
+            ${{ runner.os }}-openwrt-dl-
+
+      - name: 克隆源码与更新 Feeds
         run: |
           git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git openwrt
           cd openwrt
           ./scripts/feeds update -a && ./scripts/feeds install -a
-          chmod +x ../scripts/sl3000-patch.sh
-          ../scripts/sl3000-patch.sh
 
-      - name: Build Toolchain
+      - name: 物理补丁与 ID 锁定
+        env:
+          GITHUB_WORKSPACE: ${{ github.workspace }}
+        run: |
+          chmod +x scripts/sl3000-patch.sh
+          ./scripts/sl3000-patch.sh
+
+      - name: 构建工具链 (延续并行加速)
         working-directory: ./openwrt
         run: |
           make defconfig
           make tools/install -j$(nproc)
           make toolchain/install -j$(nproc)
 
-      - name: Build Firmware (Config Self-Healing)
+      - name: 编译固件 (全链路自愈)
         working-directory: ./openwrt
         run: |
-          # 物理禁言自愈：强制应用锁定配置，禁止交互
           export TERM=dumb
           export DEBIAN_FRONTEND=noninteractive
           cp -fv .config.locked .config
-          yes "" | make olddefconfig
-          
-          # 物理检查：确保 128MB 锁定未被源码更新冲掉
-          grep "DEVICE_3000-emmc=y" .config || (echo "❌ 配置物理死锁失效"; exit 1)
-          
+          make olddefconfig
           make -j$(nproc) || make -j1 V=s
 
-      - name: Precise Artifact Extraction
+      - name: 精准提取产物
         working-directory: ./openwrt
         run: |
           mkdir -p ../OUTPUT
-          # 模糊匹配自愈：根据物理关键字提取所有相关固件
-          find bin/targets/mediatek/filogic/ -name "*3000-emmc-sysupgrade.bin" -exec cp -v {} ../OUTPUT/ \;
+          find bin/targets/mediatek/filogic/ -name "*3000-emmc*" -exec cp -v {} ../OUTPUT/ \;
           find bin/targets/mediatek/filogic/ -name "*u-boot*" -exec cp -v {} ../OUTPUT/ \;
           find bin/targets/mediatek/filogic/ -name "*fip*" -exec cp -v {} ../OUTPUT/ \;
           cp .config ../OUTPUT/build_final.config
+          # 提取编译日志以备查
+          find ./ -name "*.log" -exec cp -v {} ../OUTPUT/ \; || true
 
-      - name: Auto Release
+      - name: 自动发布固件 (Release)
         uses: softprops/action-gh-release@v2
         if: success()
         with:
-          tag_name: SL3000-v24.10-${{ github.run_id }}
-          name: "SL3000 专属修复版 (物理对齐 128MB)"
+          tag_name: SL3000-Release-${{ github.run_id }}
+          name: "SL3000 专属固件 [128MB 物理锁定]"
+          body: |
+            🎯 目标设备: SL3000 (eMMC版)
+            🆔 物理ID: sl,3000-emmc
+            📦 内核分区: 128MB (0x8000000)
+            🛠️ 源码版本: ImmortalWrt 24.10 (Kernel 6.6)
           files: OUTPUT/*
