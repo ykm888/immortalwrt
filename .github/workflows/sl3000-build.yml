@@ -34,6 +34,7 @@ jobs:
       - name: 执行物理补丁 (自愈脚本调用)
         run: |
           chmod +x scripts/sl3000-patch.sh
+          # 物理锁定：使用绝对路径模式执行
           ./scripts/sl3000-patch.sh
 
       - name: 构建核心工具链
@@ -44,8 +45,9 @@ jobs:
           make download -j8
           make tools/install -j$(nproc)
           make toolchain/install -j$(nproc)
-          # 🔥 物理修复点：针对 24.10 编译中途清理，强行二次注入
+          # 🔥 物理修复点：针对 24.10 编译中途清理，强行二次注入补丁
           make target/linux/prepare -j$(nproc)
+          # 物理回跳根目录执行补丁
           ../scripts/sl3000-patch.sh
 
       - name: 编译全链路 (全链路自愈物理强灌)
