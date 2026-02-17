@@ -1,8 +1,7 @@
-name: SL3000_Full_Stack_Build
+name: SL3000_Full_Stack_Build_V2
 
 on:
   workflow_dispatch:
-  # 延续之前的手动触发逻辑
 
 jobs:
   build:
@@ -11,7 +10,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: 优化磁盘空间 (延续体系)
+      - name: 深度优化磁盘空间 (延续工程体系)
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost /usr/local/lib/node_modules || true
           docker rmi $(docker images -q) || true
@@ -20,26 +19,26 @@ jobs:
             git libncurses5-dev libssl-dev python3 python3-pyelftools rsync unzip \
             zlib1g-dev swig device-tree-compiler wget file tar bzip2 patch bc
           
-          # 物理修复 Swapfile
           if [ ! -f /swapfile ]; then
             sudo fallocate -l 12G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=12288
             sudo mkswap /swapfile
             sudo swapon /swapfile
           fi
 
-      - name: 缓存机制 (GitHub Actions Cache)
+      - name: 克隆源码与更新 Feeds
+        run: |
+          git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git openwrt
+          cd openwrt
+          ./scripts/feeds update -a && ./scripts/feeds install -a
+
+      # 【核心补丁】：物理缓存读取与自动保存机制
+      - name: 物理缓存链路 (Save & Restore)
         uses: actions/cache@v4
         with:
           path: openwrt/dl
           key: ${{ runner.os }}-openwrt-dl-${{ hashFiles('openwrt/feeds.conf.default') }}
           restore-keys: |
             ${{ runner.os }}-openwrt-dl-
-
-      - name: 克隆源码与更新 Feeds
-        run: |
-          git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git openwrt
-          cd openwrt
-          ./scripts/feeds update -a && ./scripts/feeds install -a
 
       - name: 物理补丁与 ID 锁定
         env:
@@ -48,32 +47,41 @@ jobs:
           chmod +x scripts/sl3000-patch.sh
           ./scripts/sl3000-patch.sh
 
-      - name: 构建工具链 (延续并行加速)
+      - name: 物理预下载 (激活缓存保存)
         working-directory: ./openwrt
         run: |
+          cp -fv .config.locked .config
           make defconfig
+          # 物理填充 dl 目录，确保缓存 Save 机制有内容可存
+          make download -j8
+          find dl -size -1k -exec ls -l {} \;
+
+      - name: 构建工具链 (并行加速)
+        working-directory: ./openwrt
+        run: |
           make tools/install -j$(nproc)
           make toolchain/install -j$(nproc)
 
-      - name: 编译固件 (全链路自愈)
+      - name: 编译固件 (物理禁言自愈)
         working-directory: ./openwrt
         run: |
           export TERM=dumb
           export DEBIAN_FRONTEND=noninteractive
           cp -fv .config.locked .config
-          make olddefconfig
+          # 物理自愈：防止配置交互死锁
+          yes "" | make olddefconfig
+          grep "DEVICE_3000-emmc=y" .config || (echo "❌ ID 对齐失效"; exit 1)
           make -j$(nproc) || make -j1 V=s
 
-      - name: 精准提取产物
+      - name: 精准提取产物 (含 U-Boot)
         working-directory: ./openwrt
         run: |
           mkdir -p ../OUTPUT
+          # 物理搜索提取所有关键固件
           find bin/targets/mediatek/filogic/ -name "*3000-emmc*" -exec cp -v {} ../OUTPUT/ \;
           find bin/targets/mediatek/filogic/ -name "*u-boot*" -exec cp -v {} ../OUTPUT/ \;
           find bin/targets/mediatek/filogic/ -name "*fip*" -exec cp -v {} ../OUTPUT/ \;
           cp .config ../OUTPUT/build_final.config
-          # 提取编译日志以备查
-          find ./ -name "*.log" -exec cp -v {} ../OUTPUT/ \; || true
 
       - name: 自动发布固件 (Release)
         uses: softprops/action-gh-release@v2
@@ -82,8 +90,7 @@ jobs:
           tag_name: SL3000-Release-${{ github.run_id }}
           name: "SL3000 专属固件 [128MB 物理锁定]"
           body: |
-            🎯 目标设备: SL3000 (eMMC版)
-            🆔 物理ID: sl,3000-emmc
-            📦 内核分区: 128MB (0x8000000)
-            🛠️ 源码版本: ImmortalWrt 24.10 (Kernel 6.6)
+            🎯 设备: SL3000 eMMC
+            📦 内核分区: 128MB 物理偏移
+            💾 状态: 全链路缓存已同步
           files: OUTPUT/*
