@@ -44,7 +44,7 @@ jobs:
           make download -j8
           make tools/install -j$(nproc)
           make toolchain/install -j$(nproc)
-          # 🔥【物理修复点】
+          # 🔥【物理修复】针对 24.10 路径报错，强制触发 prepare 并二次调用脚本补全 build_dir
           make target/linux/prepare -j$(nproc)
           ../scripts/sl3000-patch.sh
 
@@ -53,13 +53,11 @@ jobs:
         run: |
           export TERM=dumb
           export DEBIAN_FRONTEND=noninteractive
-          # 【自愈逻辑】编译前最后一秒强制物理覆盖 PARTSIZE
           sed -i 's/CONFIG_TARGET_KERNEL_PARTSIZE=.*/CONFIG_TARGET_KERNEL_PARTSIZE=131072/' .config
           sed -i 's/CONFIG_TARGET_ROOTFS_PARTSIZE=.*/CONFIG_TARGET_ROOTFS_PARTSIZE=1048576/' .config
           
           yes "" | make olddefconfig || true
           
-          # 执行物理全量编译
           make -j$(nproc) || make -j1 V=s
 
       - name: 产物物理搜索提取
