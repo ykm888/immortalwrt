@@ -6,17 +6,27 @@ REPO_ROOT="${GITHUB_WORKSPACE}"
 WORKDIR="${REPO_ROOT}/openwrt"
 SRC_DIR="${REPO_ROOT}/custom-config"
 
-echo -e "\033[32m🚀 [SL3000] 执行物理适配 (全量补丁注入)...\033[0m"
+echo -e "\033[32m🚀 [SL3000] 执行物理适配 (全量补丁注入与全自动名称校准)...\033[0m"
 
 # 1. 资源物理注入 (原文照抄逻辑)
 DTS_DEST="target/linux/mediatek/files-6.6/arch/arm64/boot/dts/mediatek"
 mkdir -p "$WORKDIR/$DTS_DEST"
+
+# 物理同步：注入你的核心 DTS 和镜像生成规则
 cp -fv "${SRC_DIR}/mt7981b-3000-emmc.dts" "$WORKDIR/$DTS_DEST/"
 cp -fv "${SRC_DIR}/filogic.mk" "$WORKDIR/target/linux/mediatek/image/filogic.mk"
 
 cd "$WORKDIR"
 
-# 2. 物理修复：一次性锁定 128MB 偏移并强制产出 U-Boot
+# 2. 【核心修复】：全自动名称匹配逻辑
+# 强制将源码中所有的 mt7981-sl3000 逻辑物理重定向到你的 3000-emmc
+echo "⚙️ 正在执行物理名称对齐：3000-emmc"
+find target/linux/mediatek/image/ -name "*.mk" -exec sed -i 's/sl3000/3000-emmc/g' {} + || true
+find target/linux/mediatek/image/ -name "*.mk" -exec sed -i 's/SL3000/3000-emmc/g' {} + || true
+find target/linux/mediatek/files-6.6/ -name "*.dts*" -exec sed -i 's/sl3000/3000-emmc/g' {} + || true
+
+# 3. 物理修复：一次性锁定 128MB 偏移并强制产出 U-Boot
+# 严格按照用户原则：原文照抄逻辑，不准漏掉任何之前验证过的补丁
 {
     echo "CONFIG_TARGET_mediatek=y"
     echo "CONFIG_TARGET_mediatek_filogic=y"
@@ -35,6 +45,7 @@ cd "$WORKDIR"
     echo "CONFIG_PACKAGE_luci=y"
 } >> .config
 
-# 生成物理锁定的备份配置，用于工作流的二次强灌
+# 4. 物理生成锁定的备份配置，用于 Workflow 的二次强灌（防止被 oldconfig 篡改）
 cp -fv .config .config.locked
-echo "✅ 补丁脚本执行完毕，已全量锁定配置。"
+
+echo "✅ 补丁脚本执行完毕，已完成全量名称校准与配置锁定。"
