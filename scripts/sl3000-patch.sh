@@ -1,20 +1,21 @@
 #!/bin/bash
 set -eo pipefail
 
-# 物理修复：锁定仓库根目录绝对路径，确保在 scripts 目录下执行时也能物理命中 DTS
-REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd)
+# 物理修复：锁定绝对路径，确保在 scripts 目录下执行时也能物理命中 DTS
+REPO_ROOT=$(cd "$(dirname "$0")"; pwd)/..
 WORKDIR="${REPO_ROOT}/openwrt"
 SRC_DIR="${REPO_ROOT}"
 
 cd "${WORKDIR}"
 
-# 1. 体系延续：物理铲平冲突项 (原文照抄 + 物理修正 SELinux 依赖报错)
+# 1. 体系延续：物理铲平冲突项 (原文照抄)
 rm -rf package/boot/arm-trusted-firmware-microchipsw
 rm -rf package/utils/audit
 rm -rf package/emortal/autosamba
 rm -rf package/utils/policycoreutils
 rm -rf package/utils/pcat-manager
-# 物理修复 24.10 依赖缺失
+
+# 物理修复 24.10 残留警告 (防止干扰编译)
 sed -i '/libaudit/d' package/libs/libsemanage/Makefile || true
 sed -i '/audit\/host/d' package/libs/libsemanage/Makefile || true
 sed -i '/policycoreutils\/host/d' package/system/refpolicy/Makefile || true
@@ -43,14 +44,14 @@ sed -i '/policycoreutils\/host/d' package/system/selinux-policy/Makefile || true
     echo "CONFIG_PACKAGE_luci=y"
 } > .config.locked
 
-# 3. 全链路自愈：DTS 物理注入 (原文照抄 + 路径自愈)
+# 3. 全链路自愈：DTS 物理注入 (原文照抄)
 DTS_PHY_DIR="target/linux/mediatek/files-6.6/arch/arm64/boot/dts/mediatek"
 mkdir -p "$DTS_PHY_DIR"
 if [ -f "${SRC_DIR}/mt7981b-3000-emmc.dts" ]; then
     cp -fv "${SRC_DIR}/mt7981b-3000-emmc.dts" "$DTS_PHY_DIR/mt7981b-3000-emmc.dts"
 fi
 
-# 核心自愈：物理补全 build_dir 下生成的内核目录
+# 核心自愈：物理补全 build_dir
 if [ -d "build_dir" ]; then
     find build_dir/ -type d -path "*/arch/arm64/boot/dts/mediatek" | while read -r dts_path; do
         cp -fv "${SRC_DIR}/mt7981b-3000-emmc.dts" "$dts_path/"
