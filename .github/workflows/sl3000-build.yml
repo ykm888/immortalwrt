@@ -31,23 +31,21 @@ jobs:
         working-directory: ./openwrt
         run: ./scripts/feeds update -a && ./scripts/feeds install -a
 
-      - name: 执行物理补丁 (自愈脚本调用)
+      - name: 执行物理补丁 (脚本：scripts/sl3000-patch.sh)
         run: |
           dos2unix scripts/sl3000-patch.sh || true
           chmod +x scripts/sl3000-patch.sh
-          # 物理输出：开启全量日记
+          # 物理全量日志
           bash -x ./scripts/sl3000-patch.sh
 
       - name: 构建核心工具链
         working-directory: ./openwrt
         run: |
-          # 物理对齐：使用初始名称 config.locked
-          cp -fv .config.locked .config
           yes "" | make defconfig
           make download -j8
           make tools/install -j$(nproc)
           make toolchain/install -j$(nproc)
-          # 🔥 物理二次注入（保持原始脚本名）
+          # 🔥 物理二次注入：确保三件套锁定
           make target/linux/prepare -j$(nproc)
           bash -x ../scripts/sl3000-patch.sh
 
@@ -56,16 +54,19 @@ jobs:
         run: |
           export TERM=dumb
           export DEBIAN_FRONTEND=noninteractive
-          # 物理同步：强制执行一次 olddefconfig 锁定配置
           yes "" | make olddefconfig || true
+          # 物理触发 Bootloader 编译
+          make package/boot/uboot-mediatek/compile -j$(nproc) V=s || true
+          make package/boot/atf-mt7981/compile -j$(nproc) V=s || true
           make -j$(nproc) || make -j1 V=s
 
       - name: 产物物理搜索提取
         run: |
           mkdir -p OUTPUT
-          find openwrt/bin/targets/mediatek/filogic/ -name "*sl3000-emmc*" -exec cp -v {} OUTPUT/ \;
-          # 物理深度收割 FIP 和 U-Boot
+          find openwrt/bin/targets/mediatek/filogic/ -name "*sl3000*" -exec cp -v {} OUTPUT/ \;
+          # 深度收割产物 (参考 25.12 成功经验)
           sudo find openwrt/ -type f \( -name "*fip*" -o -name "*u-boot*" -o -name "*bl31*" -o -name "*atf*" \) -exec cp -v {} OUTPUT/ \; || true
+          cp -v openwrt/.config OUTPUT/sl3000.config || true
 
       - name: 自动发布
         uses: softprops/action-gh-release@v2
