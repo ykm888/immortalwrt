@@ -1,5 +1,6 @@
 name: SL3000_24.10_Dedicated_Build
 
+# 物理锁定：仅允许手动触发，禁止一切自动构建
 on:
   workflow_dispatch:
 
@@ -58,18 +59,18 @@ jobs:
         working-directory: ./openwrt
         run: |
           mkdir -p ../OUTPUT
-          # 抓取系统固件
+          # 提取系统固件
           find bin/targets/mediatek/filogic/ -name "*3000-emmc-sysupgrade.bin" -exec cp -v {} ../OUTPUT/ \;
-          # 抓取 U-Boot (可能叫 fip 或 u-boot)
+          # 提取 U-Boot (精确搜索 fip/u-boot 产物)
           find bin/targets/mediatek/filogic/ -name "*u-boot*" -exec cp -v {} ../OUTPUT/ \;
           find bin/targets/mediatek/filogic/ -name "*fip*" -exec cp -v {} ../OUTPUT/ \;
-          # 备份最终配置
+          # 备份最终 .config 供物理查验
           cp .config ../OUTPUT/build_final.config
 
       - name: Auto Release
         uses: softprops/action-gh-release@v2
         if: success()
         with:
-          tag_name: SL3000-Ready
-          name: "SL3000 24.10 修复版 (ID: sl,3000-emmc)"
+          tag_name: SL3000-Ready-${{ github.run_id }}
+          name: "SL3000 24.10 修复版 (手动构建)"
           files: OUTPUT/*
