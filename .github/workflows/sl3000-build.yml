@@ -34,7 +34,7 @@ jobs:
       - name: 执行物理补丁 (自愈脚本调用)
         run: |
           chmod +x scripts/sl3000-patch.sh
-          bash scripts/sl3000-patch.sh
+          ./scripts/sl3000-patch.sh
 
       - name: 构建核心工具链
         working-directory: ./openwrt
@@ -44,9 +44,9 @@ jobs:
           make download -j8
           make tools/install -j$(nproc)
           make toolchain/install -j$(nproc)
-          # 🔥 一次性解决：在编译前最后执行一次 prepare 并强行再次注入 DTS
+          # 🔥 物理修复点：针对 24.10 编译中途清理，强行二次注入
           make target/linux/prepare -j$(nproc)
-          bash ../scripts/sl3000-patch.sh
+          ../scripts/sl3000-patch.sh
 
       - name: 编译全链路 (全链路自愈物理强灌)
         working-directory: ./openwrt
