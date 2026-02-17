@@ -34,7 +34,7 @@ jobs:
       - name: 执行物理补丁 (自愈脚本调用)
         run: |
           chmod +x scripts/sl3000-patch.sh
-          # 物理锁定：使用绝对路径模式执行
+          # 物理锁定：直接执行
           ./scripts/sl3000-patch.sh
 
       - name: 构建核心工具链
