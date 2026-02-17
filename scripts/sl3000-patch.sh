@@ -1,11 +1,13 @@
 #!/bin/bash
 set -eo pipefail
 
-# 物理修复：锁定绝对路径，确保在 scripts 目录下执行时也能物理命中 DTS
-REPO_ROOT=$(cd "$(dirname "$0")"; pwd)/..
+# 物理死锁：使用绝对路径，确保在任何目录下执行都能命中 DTS
+cd "$(dirname "$0")/.."
+REPO_ROOT=$(pwd)
 WORKDIR="${REPO_ROOT}/openwrt"
 SRC_DIR="${REPO_ROOT}"
 
+# 物理进入工作目录
 cd "${WORKDIR}"
 
 # 1. 体系延续：物理铲平冲突项 (原文照抄)
@@ -15,7 +17,7 @@ rm -rf package/emortal/autosamba
 rm -rf package/utils/policycoreutils
 rm -rf package/utils/pcat-manager
 
-# 物理修复 24.10 残留警告 (防止干扰编译)
+# 物理修复 24.10 依赖报错 (消除 WARNING)
 sed -i '/libaudit/d' package/libs/libsemanage/Makefile || true
 sed -i '/audit\/host/d' package/libs/libsemanage/Makefile || true
 sed -i '/policycoreutils\/host/d' package/system/refpolicy/Makefile || true
@@ -30,18 +32,6 @@ sed -i '/policycoreutils\/host/d' package/system/selinux-policy/Makefile || true
     echo "CONFIG_PACKAGE_atf-mt7981-sl3000-emmc=y"
     echo "CONFIG_TARGET_KERNEL_PARTSIZE=131072"
     echo "CONFIG_TARGET_ROOTFS_PARTSIZE=1048576"
-    echo "CONFIG_PACKAGE_kmod-mmc=y"
-    echo "CONFIG_PACKAGE_kmod-sdhci-mtk=y"
-    echo "CONFIG_PACKAGE_kmod-fs-f2fs=y"
-    echo "CONFIG_PACKAGE_f2fs-tools=y"
-    echo "CONFIG_PACKAGE_f2fsck=y"
-    echo "CONFIG_PACKAGE_parted=y"
-    echo "CONFIG_PACKAGE_lsblk=y"
-    echo "CONFIG_PACKAGE_blkid=y"
-    echo "CONFIG_PACKAGE_block-mount=y"
-    echo "CONFIG_PACKAGE_kmod-zram=y"
-    echo "CONFIG_PACKAGE_zram-swap=y"
-    echo "CONFIG_PACKAGE_luci=y"
 } > .config.locked
 
 # 3. 全链路自愈：DTS 物理注入 (原文照抄)
@@ -51,14 +41,10 @@ if [ -f "${SRC_DIR}/mt7981b-3000-emmc.dts" ]; then
     cp -fv "${SRC_DIR}/mt7981b-3000-emmc.dts" "$DTS_PHY_DIR/mt7981b-3000-emmc.dts"
 fi
 
-# 核心自愈：物理补全 build_dir
+# 核心自愈：物理补全 build_dir (防止编译中途 DTS 丢失)
 if [ -d "build_dir" ]; then
     find build_dir/ -type d -path "*/arch/arm64/boot/dts/mediatek" | while read -r dts_path; do
         cp -fv "${SRC_DIR}/mt7981b-3000-emmc.dts" "$dts_path/"
-        arch_base=$(echo "$dts_path" | sed 's|/arm64/boot/dts/mediatek||')
-        if [ -d "$arch_base/arm64" ] && [ ! -e "$arch_base/aarch64" ]; then
-            ln -sf arm64 "$arch_base/aarch64"
-        fi
     done
 fi
 
