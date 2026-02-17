@@ -1,7 +1,9 @@
 /dts-v1/;
-#include "mt7981.dtsi"
+/* 物理修复：适配 24.10 内核标准路径 */
+#include <arm64/mediatek/mt7981.dtsi>
 
 / {
+	/* 物理指纹：必须与 23.05 查出来的 ID 严格一致 */
 	compatible = "sl,3000-emmc", "mediatek,mt7981";
 	model = "SL-3000 eMMC (Physical Aligned 128MB Offset)";
 
@@ -11,6 +13,7 @@
 
 	memory@40000000 {
 		device_type = "memory";
+		/* 1GB RAM 物理布局 */
 		reg = <0x00 0x40000000 0x00 0x40000000>;
 	};
 };
@@ -19,7 +22,6 @@
 	status = "okay";
 	bus-width = <8>;
 	cap-mmc-highspeed;
-	# 物理修复：提升频率至 52MHz，解决大镜像引导时的读取性能瓶颈
 	max-frequency = <52000000>;
 	no-sd;
 	no-sdio;
@@ -50,13 +52,13 @@
 			read-only;
 		};
 
-		# 物理死锁点：内核分区必须为 128MB (0x8000000)
+		/* 物理死锁点：内核分区锁定为 128MB */
 		partition@380000 {
 			label = "kernel";
 			reg = <0x380000 0x8000000>;
 		};
 
-		# 物理对齐点：Rootfs 起始地址 = 0x380000 + 0x8000000 = 0x8380000
+		/* 物理对齐点：Rootfs 起始地址 = 0x8380000 */
 		partition@8380000 {
 			label = "rootfs";
 			reg = <0x8380000 0x40000000>;
