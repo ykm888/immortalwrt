@@ -16,7 +16,7 @@ jobs:
           sudo apt update
           sudo apt install -y build-essential clang flex bison gawk gettext \
             git libncurses5-dev libssl-dev python3 python3-pyelftools rsync unzip \
-            zlib1g-dev swig device-tree-compiler wget file tar bzip2 patch bc
+            zlib1g-dev swig device-tree-compiler wget file tar bzip2 patch bc dos2unix
           
           if [ ! -f /swapfile ]; then
             sudo fallocate -l 12G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=12288
@@ -33,41 +33,39 @@ jobs:
 
       - name: 执行物理补丁 (自愈脚本调用)
         run: |
+          dos2unix scripts/sl3000-patch.sh || true
           chmod +x scripts/sl3000-patch.sh
-          # 物理锁定：直接执行
-          ./scripts/sl3000-patch.sh
+          # 物理输出：开启全量日记
+          bash -x ./scripts/sl3000-patch.sh
 
       - name: 构建核心工具链
         working-directory: ./openwrt
         run: |
+          # 物理对齐：使用初始名称 config.locked
           cp -fv .config.locked .config
           yes "" | make defconfig
           make download -j8
           make tools/install -j$(nproc)
           make toolchain/install -j$(nproc)
-          # 🔥 物理修复点：针对 24.10 编译中途清理，强行二次注入补丁
+          # 🔥 物理二次注入（保持原始脚本名）
           make target/linux/prepare -j$(nproc)
-          # 物理回跳根目录执行补丁
-          ../scripts/sl3000-patch.sh
+          bash -x ../scripts/sl3000-patch.sh
 
       - name: 编译全链路 (全链路自愈物理强灌)
         working-directory: ./openwrt
         run: |
           export TERM=dumb
           export DEBIAN_FRONTEND=noninteractive
-          sed -i 's/CONFIG_TARGET_KERNEL_PARTSIZE=.*/CONFIG_TARGET_KERNEL_PARTSIZE=131072/' .config
-          sed -i 's/CONFIG_TARGET_ROOTFS_PARTSIZE=.*/CONFIG_TARGET_ROOTFS_PARTSIZE=1048576/' .config
-          
+          # 物理同步：强制执行一次 olddefconfig 锁定配置
           yes "" | make olddefconfig || true
-          
           make -j$(nproc) || make -j1 V=s
 
       - name: 产物物理搜索提取
         run: |
           mkdir -p OUTPUT
           find openwrt/bin/targets/mediatek/filogic/ -name "*sl3000-emmc*" -exec cp -v {} OUTPUT/ \;
-          find openwrt/bin/targets/mediatek/filogic/ -name "*u-boot*" -exec cp -v {} OUTPUT/ \;
-          find openwrt/bin/targets/mediatek/filogic/ -name "*fip*" -exec cp -v {} OUTPUT/ \;
+          # 物理深度收割 FIP 和 U-Boot
+          sudo find openwrt/ -type f \( -name "*fip*" -o -name "*u-boot*" -o -name "*bl31*" -o -name "*atf*" \) -exec cp -v {} OUTPUT/ \; || true
 
       - name: 自动发布
         uses: softprops/action-gh-release@v2
