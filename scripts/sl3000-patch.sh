@@ -7,14 +7,14 @@ SRC_DIR="${REPO_ROOT}"
 
 cd "${WORKDIR}"
 
-# 1. 【体系延续】物理铲平冲突项 (原文照抄，严禁漏掉之前任何补丁)
+# 1. 体系延续：物理铲平冲突项 (原文照抄，严禁漏改)
 rm -rf package/boot/arm-trusted-firmware-microchipsw
 rm -rf package/utils/audit
 rm -rf package/emortal/autosamba
 rm -rf package/utils/policycoreutils
 rm -rf package/utils/pcat-manager
 
-# 2. 【体系延续】物理死锁配置 (单位锁死，激活引导件)
+# 2. 全链路自愈：物理死锁配置 (单位锁死 131072KB)
 {
     echo "CONFIG_TARGET_mediatek=y"
     echo "CONFIG_TARGET_mediatek_filogic=y"
@@ -23,7 +23,7 @@ rm -rf package/utils/pcat-manager
     echo "CONFIG_PACKAGE_atf-mt7981-sl3000-emmc=y"
     echo "CONFIG_TARGET_KERNEL_PARTSIZE=131072"
     echo "CONFIG_TARGET_ROOTFS_PARTSIZE=1048576"
-    # 延续所有核心插件
+    # 物理延续：核心插件体系
     echo "CONFIG_PACKAGE_kmod-mmc=y"
     echo "CONFIG_PACKAGE_kmod-sdhci-mtk=y"
     echo "CONFIG_PACKAGE_kmod-fs-f2fs=y"
@@ -38,16 +38,17 @@ rm -rf package/utils/pcat-manager
     echo "CONFIG_PACKAGE_luci=y"
 } > .config.locked
 
-# 3. 🔥【路径放宽】全自动物理修复 (修复报错的同时不破坏原有体系)
-# 注入静态源码路径
-mkdir -p "target/linux/mediatek/files-6.6/arch/arm64/boot/dts/mediatek"
-[ -f "${SRC_DIR}/mt7981b-3000-emmc.dts" ] && cp -fv "${SRC_DIR}/mt7981b-3000-emmc.dts" "target/linux/mediatek/files-6.6/arch/arm64/boot/dts/mediatek/"
+# 3. 全链路自愈：DTS 物理注入 (files-6.6 架构死锁 + 放宽搜索路径修复)
+DTS_PHY_DIR="target/linux/mediatek/files-6.6/arch/arm64/boot/dts/mediatek"
+mkdir -p "$DTS_PHY_DIR"
+if [ -f "${SRC_DIR}/mt7981b-3000-emmc.dts" ]; then
+    cp -fv "${SRC_DIR}/mt7981b-3000-emmc.dts" "$DTS_PHY_DIR/mt7981b-3000-emmc.dts"
+fi
 
-# 注入动态构建路径 (暴力搜索所有潜在的内核架构目录)
+# 🔥 物理修复报错点：暴力搜索所有内核构建目录并同步注入
 if [ -d "build_dir" ]; then
     find build_dir/ -type d -path "*/arch/arm64/boot/dts/mediatek" | while read -r dts_path; do
         cp -fv "${SRC_DIR}/mt7981b-3000-emmc.dts" "$dts_path/"
-        # 建立 aarch64 到 arm64 的物理映射兼容层
         arch_base=$(echo "$dts_path" | sed 's|/arm64/boot/dts/mediatek||')
         if [ -d "$arch_base/arm64" ] && [ ! -e "$arch_base/aarch64" ]; then
             ln -sf arm64 "$arch_base/aarch64"
@@ -55,7 +56,7 @@ if [ -d "build_dir" ]; then
     done
 fi
 
-# 4. 【体系延续】Makefile 物理加固
+# 4. 全链路自愈：Makefile 物理死锁
 MK_TARGET="target/linux/mediatek/image/filogic.mk"
 cat <<EOF > "filogic.mk.patch"
 
@@ -63,7 +64,7 @@ define Device/sl3000-emmc
   DEVICE_VENDOR := SL
   DEVICE_MODEL := 3000 (eMMC)
   DEVICE_DTS := mt7981b-3000-emmc
-  DEVICE_DTS_DIR := \$(LINUX_DIR)/arch/arm64/boot/dts/mediatek
+  DEVICE_DTS_DIR := \$(LINUX_DIR)/arch/\$(ARCH)/boot/dts/mediatek
   SUPPORTED_DEVICES := sl,3000-emmc mediatek,mt7981
   BOARD_ROOTFS_PARTSIZE := 1024
   DEVICE_PACKAGES := kmod-mmc kmod-sdhci-mtk kmod-fs-f2fs f2fs-tools f2fsck \\
