@@ -1,7 +1,7 @@
 name: SL3000_24.10_Dedicated_Build
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # 物理锁定：仅允许手动触发
 
 jobs:
   build:
@@ -11,14 +11,14 @@ jobs:
 
       - name: System Cleanup & Env Setup
         run: |
-          # 物理还原：延续你之前的设置，只修复物理报错
+          # 延续之前的设置，只修复物理报错
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc || true
           sudo apt update
           sudo apt install -y build-essential clang flex bison gawk gettext \
             git libncurses5-dev libssl-dev python3 python3-pyelftools rsync unzip \
             zlib1g-dev swig device-tree-compiler wget file tar bzip2 patch
           
-          # 物理修复：如果 swapfile 已存在则跳过，避免 Text file busy
+          # 物理修复：Text file busy 报错
           if [ ! -f /swapfile ]; then
             sudo fallocate -l 12G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=12288
             sudo mkswap /swapfile
@@ -49,17 +49,22 @@ jobs:
       - name: Build Firmware (Physical Silence)
         working-directory: ./openwrt
         run: |
+          # 物理禁言：彻底解决交互死锁
           export TERM=dumb
           export DEBIAN_FRONTEND=noninteractive
           cp -fv .config.locked .config
           make olddefconfig
+          
+          # 二次核对 ID
           grep "DEVICE_3000-emmc=y" .config || (echo "❌ Device ID Matching Failed" && exit 1)
+          
           make -j$(nproc) || make -j1 V=s
 
       - name: Precise Artifact Extraction
         working-directory: ./openwrt
         run: |
           mkdir -p ../OUTPUT
+          # 提取系统固件和 U-Boot (FIP)
           find bin/targets/mediatek/filogic/ -name "*3000-emmc-sysupgrade.bin" -exec cp -v {} ../OUTPUT/ \;
           find bin/targets/mediatek/filogic/ -name "*u-boot*" -exec cp -v {} ../OUTPUT/ \;
           find bin/targets/mediatek/filogic/ -name "*fip*" -exec cp -v {} ../OUTPUT/ \;
