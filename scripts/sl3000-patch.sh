@@ -1,14 +1,16 @@
 #!/bin/bash
-# 物理熔断机制
+# 物理熔断
 set -eo pipefail
 
-# 物理死锁：直接通过脚本执行路径强行定位 REPO 根目录，消除路径偏移隐患
-REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd)
+# 物理死锁：利用 GitHub Actions 原生环境变量锁定根目录
+# 如果在本地测试，则回退到当前目录
+[ -n "$GITHUB_WORKSPACE" ] && REPO_ROOT="$GITHUB_WORKSPACE" || REPO_ROOT=$(pwd)
 WORKDIR="${REPO_ROOT}/openwrt"
 SRC_DIR="${REPO_ROOT}"
 
-# 物理进入工作区
+# 物理进入工作区，并显式执行一条 echo 确保日志开启
 cd "${WORKDIR}"
+echo "物理执行：已定位 OpenWrt 源码目录"
 
 # 1. 体系延续：物理铲平冲突项 (原文照抄)
 rm -rf package/boot/arm-trusted-firmware-microchipsw
