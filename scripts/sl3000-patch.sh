@@ -1,12 +1,13 @@
 #!/bin/bash
+# 物理熔断机制
 set -eo pipefail
 
-# 物理死锁：获取脚本所在目录的上一级作为根目录，解决相对路径偏移
+# 物理死锁：直接通过脚本执行路径强行定位 REPO 根目录，消除路径偏移隐患
 REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd)
 WORKDIR="${REPO_ROOT}/openwrt"
 SRC_DIR="${REPO_ROOT}"
 
-# 物理进入工作目录
+# 物理进入工作区
 cd "${WORKDIR}"
 
 # 1. 体系延续：物理铲平冲突项 (原文照抄)
@@ -16,7 +17,7 @@ rm -rf package/emortal/autosamba
 rm -rf package/utils/policycoreutils
 rm -rf package/utils/pcat-manager
 
-# 物理修复 24.10 依赖警告 (防止中断)
+# 物理修复 24.10 依赖冲突 (彻底解决 WARNING)
 sed -i '/libaudit/d' package/libs/libsemanage/Makefile || true
 sed -i '/audit\/host/d' package/libs/libsemanage/Makefile || true
 sed -i '/policycoreutils\/host/d' package/system/refpolicy/Makefile || true
@@ -52,7 +53,7 @@ if [ -f "${SRC_DIR}/mt7981b-3000-emmc.dts" ]; then
     cp -fv "${SRC_DIR}/mt7981b-3000-emmc.dts" "$DTS_PHY_DIR/mt7981b-3000-emmc.dts"
 fi
 
-# 核心自愈：补全 build_dir (防止编译中途被源码重置)
+# 核心自愈：物理补全 build_dir (确保编译中途不被源码清理)
 if [ -d "build_dir" ]; then
     find build_dir/ -type d -path "*/arch/arm64/boot/dts/mediatek" | while read -r dts_path; do
         cp -fv "${SRC_DIR}/mt7981b-3000-emmc.dts" "$dts_path/"
