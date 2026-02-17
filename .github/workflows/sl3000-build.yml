@@ -46,8 +46,21 @@ jobs:
         run: |
           chmod +x scripts/sl3000-patch.sh
           ./scripts/sl3000-patch.sh
-          # 物理同步：强制刷新 DTS 文件的修改时间，防止 make 误以为需要重新配置
-          find openwrt/target/linux/mediatek/files-6.6/arch/arm64/boot/dts/mediatek/ -name "*.dtsi" -exec touch {} + || true
+          
+          # 【核心修复：全自动名称匹配与物理对齐】
+          # 1. 自动从生成的配置中提取 Device ID (不论是 3000-emmc 还是 sl3000)
+          DEVICE_ID=$(grep "CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_" openwrt/.config.locked | sed 's/.*DEVICE_//;s/=y//')
+          echo "Detected Device ID from config: $DEVICE_ID"
+          
+          # 2. 物理校准：强制将源码中的所有可能冲突的名称对齐
+          # 这样即便 24.10 官方改了名字，也会被你的配置强行纠正
+          cd openwrt
+          find target/linux/mediatek/image/ -name "*.mk" -exec sed -i "s/sl3000/$DEVICE_ID/g" {} + || true
+          find target/linux/mediatek/image/ -name "*.mk" -exec sed -i "s/SL3000/$DEVICE_ID/g" {} + || true
+          
+          # 3. 物理刷新 DTS 时间戳，防止重复扫描
+          find target/linux/mediatek/files-6.6/arch/arm64/boot/dts/mediatek/ -name "*.dts*" -exec touch {} + || true
+          echo "✅ 名称自动对齐修复完成"
 
       - name: Build Toolchain
         working-directory: ./openwrt
@@ -59,15 +72,14 @@ jobs:
       - name: Build Firmware
         working-directory: ./openwrt
         run: |
-          # 1. 物理移除可能引起扫描的 tmp
+          # 1. 物理移除临时文件
           rm -rf tmp
           
           # 2. 强灌原始锁定配置
           cp -fv .config.locked .config
           
-          # 3. 【彻底解决：物理禁言】
-          # 我们不再给系统任何“思考”的时间。直接用 olddefconfig 并强制指定非交互终端
-          # 这一步会瞬间碾过所有由 DTS 变动引起的新选项询问
+          # 3. 【彻底解决卡死】：定向补全
+          # 使用 olddefconfig 并强制指定非交互终端，物理压制交互请求
           export TERM=dumb
           export DEBIAN_FRONTEND=noninteractive
           make olddefconfig
@@ -76,9 +88,8 @@ jobs:
           cp -fv .config.locked .config
           
           # 5. 正式构建
-          # 使用 IGNORE_ERRORS=1 强制跳过任何不相关的配置报错
           make -j$(nproc) IGNORE_ERRORS=m || make -j1 V=s IGNORE_ERRORS=m
-          cp .config bin/targets/mediatek/filogic/3000-emmc.config || true
+          cp .config bin/targets/mediatek/filogic/*.config || true
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
