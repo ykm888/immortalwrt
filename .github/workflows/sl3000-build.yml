@@ -47,23 +47,23 @@ jobs:
           chmod +x scripts/sl3000-patch.sh
           ./scripts/sl3000-patch.sh
 
-      # 物理修复：拆分步骤 1 - 构建工具链
       - name: 构建工具链 (Tools & Toolchain)
         working-directory: ./openwrt
         run: |
-          cp -fv .config.locked .config
-          make defconfig
+          # 物理手段 1：强制生成基础配置并下载
+          yes "" | make defconfig
           make download -j8
           make tools/install -j$(nproc)
           make toolchain/install -j$(nproc)
 
-      # 物理修复：拆分步骤 2 - 编译固件
-      - name: 编译固件 (Target Images)
+      - name: 编译固件 (强制锁定逻辑)
         working-directory: ./openwrt
         run: |
+          # 物理手段 2：再次强灌核心配置，确保不受 olddefconfig 干扰
+          cat .config.locked >> .config
           export TERM=dumb
           export DEBIAN_FRONTEND=noninteractive
-          cp -fv .config.locked .config
+          # 物理手段 3：强制压制所有新配置交互
           yes "" | make olddefconfig
           make -j$(nproc) || make -j1 V=s
 
