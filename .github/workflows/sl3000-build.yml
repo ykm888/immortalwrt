@@ -44,7 +44,7 @@ jobs:
           make download -j8
           make tools/install -j$(nproc)
           make toolchain/install -j$(nproc)
-          # 🔥【修复错误】在工具链完成后，物理执行 prepare 并再次调用补丁，放宽内核路径
+          # 🔥【物理修复】针对 24.10 路径报错，强制触发 prepare 并二次调用脚本补全 build_dir
           make target/linux/prepare -j$(nproc)
           ../scripts/sl3000-patch.sh
 
@@ -53,11 +53,10 @@ jobs:
         run: |
           export TERM=dumb
           export DEBIAN_FRONTEND=noninteractive
-          # 【自愈逻辑】编译前最后一秒强制物理覆盖 PARTSIZE，防止 Kconfig 审计自毁
+          # 【自愈逻辑】编译前最后一秒强制物理覆盖 PARTSIZE
           sed -i 's/CONFIG_TARGET_KERNEL_PARTSIZE=.*/CONFIG_TARGET_KERNEL_PARTSIZE=131072/' .config
           sed -i 's/CONFIG_TARGET_ROOTFS_PARTSIZE=.*/CONFIG_TARGET_ROOTFS_PARTSIZE=1048576/' .config
           
-          # 【自愈逻辑】压制 olddefconfig 报错，强推编译
           yes "" | make olddefconfig || true
           
           # 执行物理全量编译
@@ -66,7 +65,6 @@ jobs:
       - name: 产物物理搜索提取
         run: |
           mkdir -p OUTPUT
-          # 自愈提取：全局匹配，确保 sysupgrade/u-boot/fip 一个不留
           find openwrt/bin/targets/mediatek/filogic/ -name "*sl3000-emmc*" -exec cp -v {} OUTPUT/ \;
           find openwrt/bin/targets/mediatek/filogic/ -name "*u-boot*" -exec cp -v {} OUTPUT/ \;
           find openwrt/bin/targets/mediatek/filogic/ -name "*fip*" -exec cp -v {} OUTPUT/ \;
