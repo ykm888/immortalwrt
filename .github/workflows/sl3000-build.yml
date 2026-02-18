@@ -1,4 +1,4 @@
-name: SL3000_Fixed_Build
+name: SL3000_Split_Build
 
 on:
   workflow_dispatch:
@@ -11,7 +11,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: 专属环境初始化与 Swap 物理避让
+      - name: 环境初始化与 Swap 避让
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /var/lib/docker || true
           sudo apt update
@@ -19,7 +19,6 @@ jobs:
             git libncurses5-dev libssl-dev python3 python3-pyelftools rsync unzip \
             zlib1g-dev swig device-tree-compiler wget file tar bzip2 patch bc dos2unix
           
-          # 物理修复：检查 Swap 是否已激活，防止 "Text file busy" 报错
           if ! swapon --show | grep -q '/swapfile'; then
             if [ -f /swapfile ]; then sudo swapoff /swapfile || true; fi
             sudo fallocate -l 12G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=12288
@@ -34,31 +33,31 @@ jobs:
         working-directory: ./openwrt
         run: ./scripts/feeds update -a && ./scripts/feeds install -a
 
-      - name: 执行物理补丁 (脚本：scripts/sl3000-patch.sh)
+      - name: 执行物理补丁 (专属定制)
         run: |
           dos2unix scripts/sl3000-patch.sh || true
           chmod +x scripts/sl3000-patch.sh
           bash -x ./scripts/sl3000-patch.sh
 
-      - name: 构建全链路 (物理心跳自愈模式)
+      - name: 步骤 1：构建核心工具链 (Tools & Toolchain)
         working-directory: ./openwrt
         run: |
-          # 1. 物理心跳：防止网页假死导致任务超时
-          (while true; do sleep 600; echo "--- [HEARTBEAT] $(date) | Runner is Alive | CPU: $(nproc) ---"; done) &
-          
-          # 2. 物理重置配置 (针对 24.10 优化)
+          (while true; do sleep 600; echo "--- [HEARTBEAT] Toolchain Building... ---"; done) &
           export DEBIAN_FRONTEND=noninteractive
+          # 物理重置配置防止死循环
           rm -f .config*
           bash -x ../scripts/sl3000-patch.sh
           yes "" | make defconfig
           
-          # 3. 稳健编译
           make tools/install -j$(nproc)
           make toolchain/install -j$(nproc)
-          
-          # 物理二次对齐 DTS
+
+      - name: 步骤 2：构建专属固件 (Target Images)
+        working-directory: ./openwrt
+        run: |
+          (while true; do sleep 600; echo "--- [HEARTBEAT] Firmware Building... ---"; done) &
+          # 物理二次对齐，确保工具链生成后内核路径正确
           bash -x ../scripts/sl3000-patch.sh
-          
           make -j$(nproc) || make -j1 V=s
 
       - name: 产物物理收割
@@ -72,5 +71,5 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: success()
         with:
-          tag_name: SL3000-v24.10-${{ github.run_id }}
+          tag_name: SL3000-Split-${{ github.run_id }}
           files: OUTPUT/*
