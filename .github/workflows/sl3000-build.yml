@@ -1,4 +1,4 @@
-name: SL3000_Split_Build
+name: SL3000_Total_Fix_Build
 
 on:
   workflow_dispatch:
@@ -11,7 +11,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: 环境初始化与 Swap 避让
+      - name: 环境初始化与 Swap 物理隔离
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /var/lib/docker || true
           sudo apt update
@@ -33,30 +33,29 @@ jobs:
         working-directory: ./openwrt
         run: ./scripts/feeds update -a && ./scripts/feeds install -a
 
-      - name: 执行物理补丁 (专属定制)
+      - name: 执行物理补丁 (scripts/sl3000-patch.sh)
         run: |
           dos2unix scripts/sl3000-patch.sh || true
           chmod +x scripts/sl3000-patch.sh
           bash -x ./scripts/sl3000-patch.sh
 
-      - name: 步骤 1：构建核心工具链 (Tools & Toolchain)
+      - name: 步骤 1：物理构建核心工具链
         working-directory: ./openwrt
         run: |
-          (while true; do sleep 600; echo "--- [HEARTBEAT] Toolchain Building... ---"; done) &
+          (while true; do sleep 600; echo "--- [HEARTBEAT] Building Toolchain ---"; done) &
+          # 彻底解决 terminal 报错：禁止任何交互，强制重置配置
           export DEBIAN_FRONTEND=noninteractive
-          # 物理重置配置防止死循环
           rm -f .config*
           bash -x ../scripts/sl3000-patch.sh
           yes "" | make defconfig
-          
           make tools/install -j$(nproc)
           make toolchain/install -j$(nproc)
 
-      - name: 步骤 2：构建专属固件 (Target Images)
+      - name: 步骤 2：物理构建专属固件
         working-directory: ./openwrt
         run: |
-          (while true; do sleep 600; echo "--- [HEARTBEAT] Firmware Building... ---"; done) &
-          # 物理二次对齐，确保工具链生成后内核路径正确
+          (while true; do sleep 600; echo "--- [HEARTBEAT] Building Firmware ---"; done) &
+          # 二次物理校准
           bash -x ../scripts/sl3000-patch.sh
           make -j$(nproc) || make -j1 V=s
 
@@ -71,5 +70,5 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: success()
         with:
-          tag_name: SL3000-Split-${{ github.run_id }}
+          tag_name: SL3000-TotalFix-${{ github.run_id }}
           files: OUTPUT/*
