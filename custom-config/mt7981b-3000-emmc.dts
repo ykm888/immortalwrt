@@ -1,13 +1,10 @@
 /dts-v1/;
-/* 物理对齐：引用你刚才贴出的官方基础文件 */
 #include "mt7981.dtsi"
 
 / {
-	/* 身份指纹：延续 23.05 的设置，保证 U-Boot 识别 */
 	compatible = "sl,3000-emmc", "mediatek,mt7981";
-	model = "SL-3000 eMMC (Official-Source Aligned)";
+	model = "SL-3000 eMMC";
 
-	/* 物理锁定：1GB RAM 内存布局 */
 	memory@40000000 {
 		device_type = "memory";
 		reg = <0x00 0x40000000 0x00 0x40000000>;
@@ -18,59 +15,51 @@
 	};
 };
 
-/* * 物理对齐：官方源码中 mmc 位于 soc 节点下 
- * 地址为 11230000 (通常是 MediaTek 的 MSDC0)
- */
-&soc {
-	mmc@11230000 {
-		compatible = "mediatek,mt7981-mmc";
-		reg = <0 0x11230000 0 0x1000>,
-		      <0 0x11de0000 0 0x1000>;
-		interrupts = <GIC_SPI 143 IRQ_TYPE_LEVEL_HIGH>;
-		clocks = <&topckgen CLK_TOP_EMMC_416M_SEL>,
-			 <&infracfg CLK_INFRA_MSDC_HCK_CK>,
-			 <&infracfg CLK_INFRA_MSDC_CK>,
-			 <&infracfg CLK_INFRA_MSDC_66M_CK>;
-		clock-names = "source", "hclk", "source_cg", "bus_up_way";
-		status = "okay";
-		bus-width = <8>;
-		cap-mmc-highspeed;
-		max-frequency = <52000000>;
-		non-removable;
+/* 物理引用：锁定 MSDC0 作为系统存储 */
+&mmc0 {
+	status = "okay";
+	bus-width = <8>;
+	cap-mmc-highspeed;
+	max-frequency = <52000000>;
+	non-removable;
+	pinctrl-names = "default", "state_uhs";
+	pinctrl-0 = <&mmc0_pins_default>;
+	pinctrl-1 = <&mmc0_pins_uhs>;
+	vmmc-supply = <&reg_3p3v>;
+	vqmmc-supply = <&reg_1p8v>;
 
-		partitions {
-			compatible = "fixed-partitions";
-			#address-cells = <1>;
-			#size-cells = <1>;
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
 
-			partition@0 {
-				label = "gpt";
-				reg = <0x0 0x100000>;
-				read-only;
-			};
+		partition@0 {
+			label = "gpt";
+			reg = <0x0 0x100000>;
+			read-only;
+		};
 
-			partition@100000 {
-				label = "u-boot-env";
-				reg = <0x100000 0x80000>;
-			};
+		partition@100000 {
+			label = "u-boot-env";
+			reg = <0x100000 0x80000>;
+		};
 
-			partition@180000 {
-				label = "factory";
-				reg = <0x180000 0x200000>;
-				read-only;
-			};
+		partition@180000 {
+			label = "factory";
+			reg = <0x180000 0x200000>;
+			read-only;
+		};
 
-			/* 物理锁定：128MB 内核分区 */
-			partition@380000 {
-				label = "kernel";
-				reg = <0x380000 0x8000000>;
-			};
+		/* 物理锁定：128MB 内核分区 */
+		partition@380000 {
+			label = "kernel";
+			reg = <0x380000 0x8000000>;
+		};
 
-			/* 物理锁定：Rootfs 起始点对齐 */
-			partition@8380000 {
-				label = "rootfs";
-				reg = <0x8380000 0x40000000>;
-			};
+		/* 物理锁定：Rootfs */
+		partition@8380000 {
+			label = "rootfs";
+			reg = <0x8380000 0x30000000>;
 		};
 	};
 };
