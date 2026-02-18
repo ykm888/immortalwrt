@@ -1,13 +1,15 @@
 #!/bin/bash
+# 物理熔断
 set -ex
 
+# 物理死锁：锚定路径变量
 REPO_ROOT="${GITHUB_WORKSPACE:-$(pwd)}"
 WORKDIR="${REPO_ROOT}/openwrt"
 CONF_SRC="${REPO_ROOT}/custom-config"
 
 cd "${WORKDIR}"
 
-# 1. 【专属指纹】
+# 1. 【专属指纹】物理修改系统标识
 cat << 'EOF' > package/base-files/files/etc/banner
   _______                     ________        
  |       |.-----.-----.-----.|  |  |  |.----. _|_
@@ -21,7 +23,7 @@ EOF
 
 sed -i "s/DISTRIB_DESCRIPTION='.*'/DISTRIB_DESCRIPTION='SL-3000 Exclusive'/g" package/base-files/files/etc/openwrt_release
 
-# 2. 【物理铲平】
+# 2. 【物理铲平】移除冲突依赖
 rm -rf package/libs/libsemanage || true
 rm -rf package/feeds/packages/python-semanage || true
 rm -rf package/feeds/packages/selinux-python || true
