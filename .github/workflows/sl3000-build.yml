@@ -1,4 +1,4 @@
-name: SL3000_Full_Stack_Build
+name: SL3000_Exclusive_Source_Build
 
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: 体系延续：环境清理与补全
+      - name: 体系延续：环境清理与 12GB Swap
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /var/lib/docker || true
           sudo apt update
@@ -24,57 +24,57 @@ jobs:
             sudo swapon /swapfile
           fi
 
-      - name: 克隆源码 (锁定 24.10 分支)
+      - name: 克隆专属基准源码 (24.10)
         run: git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git openwrt
 
       - name: 更新 Feeds
         working-directory: ./openwrt
         run: ./scripts/feeds update -a && ./scripts/feeds install -a
 
-      - name: 执行物理补丁 (脚本：scripts/sl3000-patch.sh)
+      - name: 执行物理补丁 (专属定制脚本)
         run: |
           dos2unix scripts/sl3000-patch.sh || true
           chmod +x scripts/sl3000-patch.sh
-          # 物理全量日志，监控 custom-config 注入
+          # 物理输出全量日志，监控专属标识注入过程
           bash -x ./scripts/sl3000-patch.sh
 
       - name: 构建核心工具链
         working-directory: ./openwrt
         run: |
-          # 物理修复：强制非交互，防止卡死
+          # 物理修复：强制非交互，屏蔽卡死
           yes "" | make defconfig
           make download -j8
           make tools/install -j$(nproc)
           make toolchain/install -j$(nproc)
-          # 🔥 物理二次注入：防止工具链安装重置 target
+          # 🔥 专属源码二次注入加固
           make target/linux/prepare -j$(nproc)
           bash -x ../scripts/sl3000-patch.sh
 
-      - name: 编译全链路 (全链路自愈物理强灌)
+      - name: 编译全链路 (全链路自愈)
         working-directory: ./openwrt
         run: |
           export TERM=dumb
           export DEBIAN_FRONTEND=noninteractive
           # 物理修复：强制跳过 olddefconfig 交互
           yes "" | make olddefconfig
-          # 物理触发 ATF/U-Boot 编译 (24.10 规格)
+          # 物理触发专属 ATF/U-Boot 编译
           make package/boot/uboot-mediatek/compile -j$(nproc) V=s || true
           make package/boot/atf-mt7981/compile -j$(nproc) V=s || true
           make -j$(nproc) || make -j1 V=s
 
-      - name: 产物物理搜索提取
+      - name: 产物物理收割
         run: |
           mkdir -p OUTPUT
-          # 1. 提取系统镜像
+          # 提取 SL3000 专属镜像
           find openwrt/bin/targets/mediatek/filogic/ -name "*sl3000*" -exec cp -v {} OUTPUT/ \;
-          # 2. 深度物理收割 FIP/U-Boot
+          # 深度物理收割 FIP/U-Boot/ATF
           sudo find openwrt/ -type f \( -name "*fip*" -o -name "*u-boot*" -o -name "*bl31*" -o -name "*atf*" \) -exec cp -v {} OUTPUT/ \; || true
-          # 3. 配置文件存档
+          # 配置文件存档
           cp -v openwrt/.config OUTPUT/sl3000.config || true
 
       - name: 自动发布
         uses: softprops/action-gh-release@v2
         if: success()
         with:
-          tag_name: SL3000-v24.10-${{ github.run_id }}
+          tag_name: SL3000-v24.10-Exclusive-${{ github.run_id }}
           files: OUTPUT/*
