@@ -11,7 +11,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: 环境初始化与 Swap 物理隔离
+      - name: 环境初始化与 Swap
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /var/lib/docker || true
           sudo apt update
@@ -39,23 +39,24 @@ jobs:
           chmod +x scripts/sl3000-patch.sh
           bash -x ./scripts/sl3000-patch.sh
 
-      - name: 步骤 1：物理构建核心工具链
+      - name: 步骤 1：构建核心工具链
         working-directory: ./openwrt
         run: |
           (while true; do sleep 600; echo "--- [HEARTBEAT] Building Toolchain ---"; done) &
-          # 彻底解决 terminal 报错：禁止任何交互，强制重置配置
+          # 物理锁定非交互模式，解决 terminal unknown 报错
           export DEBIAN_FRONTEND=noninteractive
+          export TERM=xterm-256color
           rm -f .config*
           bash -x ../scripts/sl3000-patch.sh
           yes "" | make defconfig
           make tools/install -j$(nproc)
           make toolchain/install -j$(nproc)
 
-      - name: 步骤 2：物理构建专属固件
+      - name: 步骤 2：构建专属固件
         working-directory: ./openwrt
         run: |
           (while true; do sleep 600; echo "--- [HEARTBEAT] Building Firmware ---"; done) &
-          # 二次物理校准
+          export TERM=xterm-256color
           bash -x ../scripts/sl3000-patch.sh
           make -j$(nproc) || make -j1 V=s
 
@@ -70,5 +71,5 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: success()
         with:
-          tag_name: SL3000-TotalFix-${{ github.run_id }}
+          tag_name: SL3000-Final-${{ github.run_id }}
           files: OUTPUT/*
