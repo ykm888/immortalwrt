@@ -22,11 +22,14 @@ jobs:
             sudo fallocate -l 12G /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
           fi
 
-      - name: 克隆源码与 Feeds
+      - name: 克隆源码 (24.10)
+        run: git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git openwrt
+
+      - name: 更新 Feeds
+        working-directory: ./openwrt
         run: |
-          git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git openwrt
-          cd openwrt
-          ./scripts/feeds update -a && ./scripts/feeds install -a
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
 
       - name: 执行物理补丁 (scripts/sl3000-patch.sh)
         run: |
@@ -38,6 +41,7 @@ jobs:
         run: |
           export DEBIAN_FRONTEND=noninteractive
           export TERM=xterm-256color
+          # 物理隔离：先 patch 后 defconfig，不再运行 clean-feeds
           yes "" | make defconfig
           make tools/install -j$(nproc)
           make toolchain/install -j$(nproc)
@@ -47,21 +51,15 @@ jobs:
         run: |
           (while true; do sleep 300; echo "--- [HEARTBEAT] Still Compiling... ---"; done) &
           export TERM=xterm-256color
-          # 物理攻坚：内核优先并开启详细日志
           make target/linux/compile -j$(nproc) V=s
-          # 全量合成 (包含 uboot 和 fip)
           make -j$(nproc) || make -j1 V=s
 
-      - name: 产物物理收割 (含 Bootloader)
+      - name: 产物物理收割
         run: |
           mkdir -p OUTPUT
-          # 1. 拷贝 sysupgrade 固件
           find openwrt/bin/targets/mediatek/filogic/ -name "*sl3000*" -exec cp -v {} OUTPUT/ \;
-          # 2. 物理提取核心引导程序 (FIP/U-Boot/ATF) 用于解决刷机失败
           find openwrt/bin/targets/mediatek/filogic/ -name "*fip*" -exec cp -v {} OUTPUT/ \; || true
           find openwrt/bin/targets/mediatek/filogic/ -name "*u-boot*" -exec cp -v {} OUTPUT/ \; || true
-          find openwrt/bin/targets/mediatek/filogic/ -name "*bl31*" -exec cp -v {} OUTPUT/ \; || true
-          # 3. 物理备份配置
           cp -v openwrt/.config OUTPUT/sl3000.config || true
 
       - name: 自动发布
