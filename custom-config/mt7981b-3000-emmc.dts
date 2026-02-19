@@ -13,13 +13,57 @@
 	chosen {
 		bootargs = "console=ttyS0,115200n1 loglevel=8 root=PARTLABEL=rootfs rootwait rootfstype=squashfs,f2fs";
 	};
+
+	/* 物理补丁：补全缺失的电压调节器定义，消除 reg_1p8v 报错 */
+	reg_1p8v: regulator-1p8v {
+		compatible = "regulator-fixed";
+		regulator-name = "reg_1p8v";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+		always-on;
+	};
+
+	reg_3p3v: regulator-3p3v {
+		compatible = "regulator-fixed";
+		regulator-name = "reg_3p3v";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		always-on;
+	};
 };
 
-/* 物理引用：锁定 MSDC0 作为系统存储 */
+/* 物理修复：Pinctrl 节点补全 */
+&pio {
+	mmc0_pins_default: mmc0-pins-default {
+		mux {
+			function = "flash";
+			groups = "emmc_45";
+		};
+		conf {
+			groups = "emmc_45";
+			drive-strength = <MTK_DRIVE_8mA>;
+			bias-pull-up = <MTK_PUPD_SET_R1R0_01>;
+		};
+	};
+
+	mmc0_pins_uhs: mmc0-pins-uhs {
+		mux {
+			function = "flash";
+			groups = "emmc_45";
+		};
+		conf {
+			groups = "emmc_45";
+			drive-strength = <MTK_DRIVE_10mA>;
+			bias-pull-up = <MTK_PUPD_SET_R1R0_01>;
+		};
+	};
+};
+
 &mmc0 {
 	status = "okay";
 	bus-width = <8>;
 	cap-mmc-highspeed;
+	cap-mmc-hw-reset;
 	max-frequency = <52000000>;
 	non-removable;
 	pinctrl-names = "default", "state_uhs";
@@ -28,6 +72,7 @@
 	vmmc-supply = <&reg_3p3v>;
 	vqmmc-supply = <&reg_1p8v>;
 
+	/* 物理锁定：符合 6.6 内核规范的分区表 */
 	partitions {
 		compatible = "fixed-partitions";
 		#address-cells = <1>;
@@ -50,13 +95,13 @@
 			read-only;
 		};
 
-		/* 物理锁定：128MB 内核分区 */
+		/* 物理同步：SL3000 专用内核分区 (128MB) */
 		partition@380000 {
 			label = "kernel";
 			reg = <0x380000 0x8000000>;
 		};
 
-		/* 物理锁定：Rootfs */
+		/* 物理同步：Rootfs 分区 */
 		partition@8380000 {
 			label = "rootfs";
 			reg = <0x8380000 0x30000000>;
