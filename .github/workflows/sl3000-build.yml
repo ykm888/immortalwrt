@@ -21,19 +21,15 @@ jobs:
             sudo fallocate -l 12G /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
           fi
 
-      - name: 克隆源码与更新 Feeds (24.10)
+      - name: 克隆源码 (24.10)
         run: |
           git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git openwrt
           cd openwrt && ./scripts/feeds update -a && ./scripts/feeds install -a
 
-      - name: 执行物理补丁
+      - name: 执行物理修复补丁 (去单位化版本)
         run: |
           dos2unix scripts/sl3000-patch.sh && chmod +x scripts/sl3000-patch.sh
           bash -x ./scripts/sl3000-patch.sh
-
-      - name: 物理路径审计
-        run: |
-          ls -R openwrt/target/linux/mediatek/files-6.6/arch/arm64/boot/dts/mediatek/mediatek/
 
       - name: 步骤 1：构建工具链
         working-directory: ./openwrt
@@ -61,5 +57,5 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: success()
         with:
-          tag_name: SL3000-Final-${{ github.run_id }}
+          tag_name: SL3000-Ultimate-Fixed-${{ github.run_id }}
           files: OUTPUT/*
