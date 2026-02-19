@@ -11,7 +11,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: 初始化 12G Swap
+      - name: 物理环境初始化 (12G Swap)
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /var/lib/docker || true
           sudo apt update && sudo apt install -y build-essential clang flex bison gawk gettext \
@@ -21,15 +21,19 @@ jobs:
             sudo fallocate -l 12G /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
           fi
 
-      - name: 克隆源码 (24.10)
+      - name: 克隆源码与更新 Feeds (24.10)
         run: |
           git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git openwrt
           cd openwrt && ./scripts/feeds update -a && ./scripts/feeds install -a
 
-      - name: 执行物理补丁 (DTS/Makefile/Config)
+      - name: 执行物理补丁
         run: |
           dos2unix scripts/sl3000-patch.sh && chmod +x scripts/sl3000-patch.sh
           bash -x ./scripts/sl3000-patch.sh
+
+      - name: 物理路径审计
+        run: |
+          ls -R openwrt/target/linux/mediatek/files-6.6/arch/arm64/boot/dts/mediatek/mediatek/
 
       - name: 步骤 1：构建工具链
         working-directory: ./openwrt
@@ -39,14 +43,14 @@ jobs:
           make tools/install -j$(nproc)
           make toolchain/install -j$(nproc)
 
-      - name: 步骤 2：构建固件与 FIP 引导
+      - name: 步骤 2：生成固件与 FIP 引导
         working-directory: ./openwrt
         run: |
           (while true; do sleep 300; echo "--- [HEARTBEAT] Still Compiling ---"; done) &
           make target/linux/compile -j$(nproc) V=s
           make -j$(nproc) || make -j1 V=s
 
-      - name: 产物收割 (提取固件与 fip.bin)
+      - name: 产物物理收割
         run: |
           mkdir -p OUTPUT
           find openwrt/bin/targets/mediatek/filogic/ -name "*sl3000*" -exec cp -v {} OUTPUT/ \;
