@@ -1,4 +1,4 @@
-name: SL3000_Total_Fix_Build
+name: SL3000_Ultimate_Fix_Build
 
 on:
   workflow_dispatch:
@@ -21,41 +21,54 @@ jobs:
             sudo fallocate -l 12G /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
           fi
 
-      - name: 克隆源码与更新 Feeds (24.10)
+      - name: 克隆源码与 Feeds (24.10)
         run: |
           git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git openwrt
           cd openwrt && ./scripts/feeds update -a && ./scripts/feeds install -a
 
-      - name: 执行物理修复补丁
+      - name: 执行物理修复补丁 (死锁路径)
         run: |
           dos2unix scripts/sl3000-patch.sh && chmod +x scripts/sl3000-patch.sh
           bash -x ./scripts/sl3000-patch.sh
 
-      - name: 步骤 1：构建工具链
+      - name: 步骤 1：构建工具链与 U-Boot 基础
         working-directory: ./openwrt
         run: |
           export DEBIAN_FRONTEND=noninteractive
           yes "" | make defconfig
           make tools/install -j$(nproc)
           make toolchain/install -j$(nproc)
+          # 物理优先构建引导程序，防止后续流程覆盖
+          make package/boot/uboot-mediatek/compile -j$(nproc) V=s
 
       - name: 步骤 2：全量构建
         working-directory: ./openwrt
         run: |
           (while true; do sleep 300; echo "--- [HEARTBEAT] Still Building ---"; done) &
-          make target/linux/compile -j$(nproc) V=s
           make -j$(nproc) || make -j1 V=s
 
-      - name: 产物物理收割
+      - name: 产物物理收割 (硬核全盘抓取)
         run: |
           mkdir -p OUTPUT
+          # 1. 抓取系统固件
           find openwrt/bin/targets/mediatek/filogic/ -name "*sl3000*" -exec cp -v {} OUTPUT/ \;
-          find openwrt/bin/targets/mediatek/filogic/ -name "*.bin" | grep -iE "fip|u-boot|bl31" -exec cp -v {} OUTPUT/ \; || true
+          
+          # 2. 物理抓取 FIP/U-Boot 引导程序
+          # 先搜 bin 目录
+          find openwrt/bin/targets/mediatek/filogic/ -name "*.bin" | grep -iE "fip|u-boot|bl2" -exec cp -v {} OUTPUT/ \; || true
+          
+          # 🔥 物理兜底：如果 bin 里没有，去编译缓冲区硬挖，彻底解决“成功但不生成”的问题
+          if ! ls OUTPUT/ | grep -qiE "fip|u-boot"; then
+            echo "Warning: FIP not found in bin, diving into build_dir..."
+            find openwrt/build_dir/ -name "*fip.bin" -exec cp -v {} OUTPUT/ \; || true
+            find openwrt/build_dir/ -name "*u-boot.bin" -exec cp -v {} OUTPUT/ \; || true
+          fi
+          
           cp -v openwrt/.config OUTPUT/sl3000.config
 
       - name: 自动发布
         uses: softprops/action-gh-release@v2
         if: success()
         with:
-          tag_name: SL3000-Final-Fixed-${{ github.run_id }}
+          tag_name: SL3000-Final-UBOOT-FIX-${{ github.run_id }}
           files: OUTPUT/*
