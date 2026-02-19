@@ -15,24 +15,27 @@ sed -i "s/DISTRIB_DESCRIPTION='.*'/DISTRIB_DESCRIPTION='SL-3000 Exclusive'/g" pa
 find package/feeds/packages/ -name "*selinux*" -exec rm -rf {} + || true
 rm -rf package/feeds/packages/python-semanage package/system/refpolicy package/system/selinux-policy package/utils/audit package/utils/policycoreutils package/libs/libsemanage package/boot/arm-trusted-firmware-microchipsw || true
 
-# 3. 【DTS 路径物理闭环】彻底解决 6.6 内核找不到 DTS 的报错
+# 3. 【DTS 路径物理闭环】彻底解决 6.6 内核嵌套路径报错
 DTS_DIR="target/linux/mediatek/files-6.6/arch/arm64/boot/dts/mediatek/mediatek"
 mkdir -p "$DTS_DIR"
 cp -fv "${CONF_SRC}/mt7981b-3000-emmc.dts" "$DTS_DIR/mt7981b-3000-emmc.dts"
 
 # 4. 【Makefile 物理追加】
-# 物理修正：在追加前清理旧定义，防止重复定义导致 make 崩溃
+# 在追加前清理旧定义，防止重复定义导致 make 崩溃
 sed -i '/define Device\/sl3000-emmc/,/endef/d' target/linux/mediatek/image/filogic.mk || true
 cat "${CONF_SRC}/filogic.mk" >> target/linux/mediatek/image/filogic.mk
 
-# 5. 【.config 物理死锁】
+# 5. 【.config 物理填充】
 cp -fv "${CONF_SRC}/sl3000.config" .config
 echo "CONFIG_TARGET_mediatek=y" >> .config
 echo "CONFIG_TARGET_mediatek_filogic=y" >> .config
 echo "CONFIG_TARGET_mediatek_filogic_DEVICE_sl3000-emmc=y" >> .config
+# 物理修正：通过配置开启 U-Boot/ATF 编译，由系统原生生成 FIP
 echo "CONFIG_PACKAGE_uboot-mediatek=y" >> .config
 echo "CONFIG_PACKAGE_atf-mt7981=y" >> .config
-# 物理同步：分区大小锁定（以 KB 为单位）
+echo "CONFIG_UBOOT_mediatek_mt7981_sl3000-emmc=y" >> .config
+
+# 物理同步：分区大小锁定
 echo "CONFIG_TARGET_KERNEL_PARTSIZE=131072" >> .config
 echo "CONFIG_TARGET_ROOTFS_PARTSIZE=524288" >> .config
 echo "CONFIG_DEBUG_INFO=n" >> .config
