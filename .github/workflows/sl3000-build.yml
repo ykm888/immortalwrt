@@ -49,8 +49,10 @@ jobs:
       - name: 产物物理收割
         run: |
           mkdir -p OUTPUT
+          # 提取 sysupgrade 镜像
           find openwrt/bin/targets/mediatek/filogic/ -name "*sl3000*" -exec cp -v {} OUTPUT/ \;
-          find openwrt/bin/targets/mediatek/filogic/ -name "*fip.bin" -exec cp -v {} OUTPUT/ \; || true
+          # 提取原生链生成的 fip/u-boot 镜像
+          find openwrt/bin/targets/mediatek/filogic/ -name "*.bin" | grep -iE "fip|u-boot|bl31" -exec cp -v {} OUTPUT/ \; || true
           cp -v openwrt/.config OUTPUT/sl3000.config
 
       - name: 自动发布
