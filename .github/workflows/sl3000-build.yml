@@ -11,11 +11,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: 环境初始化与 12G Swap
+      - name: 初始化 12G Swap
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /var/lib/docker || true
-          sudo apt update
-          sudo apt install -y build-essential clang flex bison gawk gettext \
+          sudo apt update && sudo apt install -y build-essential clang flex bison gawk gettext \
             git libncurses5-dev libssl-dev python3 python3-pyelftools rsync unzip \
             zlib1g-dev swig device-tree-compiler wget file tar bzip2 patch bc dos2unix
           if ! swapon --show | grep -q '/swapfile'; then
@@ -23,48 +22,40 @@ jobs:
           fi
 
       - name: 克隆源码 (24.10)
-        run: git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git openwrt
-
-      - name: 更新 Feeds
-        working-directory: ./openwrt
         run: |
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
+          git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git openwrt
+          cd openwrt && ./scripts/feeds update -a && ./scripts/feeds install -a
 
-      - name: 执行物理补丁 (scripts/sl3000-patch.sh)
+      - name: 执行物理补丁 (DTS/Makefile/Config)
         run: |
           dos2unix scripts/sl3000-patch.sh && chmod +x scripts/sl3000-patch.sh
           bash -x ./scripts/sl3000-patch.sh
 
-      - name: 步骤 1：构建核心工具链
+      - name: 步骤 1：构建工具链
         working-directory: ./openwrt
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          export TERM=xterm-256color
-          # 物理隔离：先 patch 后 defconfig，不再运行 clean-feeds
           yes "" | make defconfig
           make tools/install -j$(nproc)
           make toolchain/install -j$(nproc)
 
-      - name: 步骤 2：构建固件与全量引导
+      - name: 步骤 2：构建固件与 FIP 引导
         working-directory: ./openwrt
         run: |
-          (while true; do sleep 300; echo "--- [HEARTBEAT] Still Compiling... ---"; done) &
-          export TERM=xterm-256color
+          (while true; do sleep 300; echo "--- [HEARTBEAT] Still Compiling ---"; done) &
           make target/linux/compile -j$(nproc) V=s
           make -j$(nproc) || make -j1 V=s
 
-      - name: 产物物理收割
+      - name: 产物收割 (提取固件与 fip.bin)
         run: |
           mkdir -p OUTPUT
           find openwrt/bin/targets/mediatek/filogic/ -name "*sl3000*" -exec cp -v {} OUTPUT/ \;
-          find openwrt/bin/targets/mediatek/filogic/ -name "*fip*" -exec cp -v {} OUTPUT/ \; || true
-          find openwrt/bin/targets/mediatek/filogic/ -name "*u-boot*" -exec cp -v {} OUTPUT/ \; || true
-          cp -v openwrt/.config OUTPUT/sl3000.config || true
+          find openwrt/bin/targets/mediatek/filogic/ -name "*fip.bin" -exec cp -v {} OUTPUT/ \; || true
+          cp -v openwrt/.config OUTPUT/sl3000.config
 
       - name: 自动发布
         uses: softprops/action-gh-release@v2
         if: success()
         with:
-          tag_name: SL3000-FullBoot-${{ github.run_id }}
+          tag_name: SL3000-Final-${{ github.run_id }}
           files: OUTPUT/*
