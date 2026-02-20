@@ -70,18 +70,18 @@ jobs:
         # 【物理手术】彻底解决 aarch64 编译器遇到 MIPS -mabi=32 错误
         UBOOT_MAKEFILE="package/boot/uboot-mediatek/Makefile"
         if [ -f "$UBOOT_MAKEFILE" ]; then
-          # 物理清空：删除所有变体定义行，防止 MIPS 目标进入循环
+          # 物理清空原有型号，防止架构污染
           sed -i '/BuildVariants [+: ]=/d' "$UBOOT_MAKEFILE"
-          # 物理注入：强行锁定唯一的 ARM64 变体
+          # 物理锁定唯一目标
           sed -i '/include $(INCLUDE_DIR)\/package.mk/i BuildVariants := mt7981_sl3000-emmc' "$UBOOT_MAKEFILE"
-          echo "Physical fix: BuildVariants locked to mt7981_sl3000-emmc"
+          echo "Physical fix applied."
         fi
         
-        # 物理锁死 .config
+        # 物理修正 .config
         sed -i 's/CONFIG_PACKAGE_uboot-mediatek-.*=y/# CONFIG_PACKAGE_uboot-mediatek- is not set/g' .config
         echo "CONFIG_PACKAGE_uboot-mediatek-mt7981_sl3000-emmc=y" >> .config
         
-        # 执行用户自定义补丁
+        # 执行脚本补丁
         [ -e $GITHUB_WORKSPACE/sl3000-patch.sh ] && /bin/bash $GITHUB_WORKSPACE/sl3000-patch.sh
 
     - name: Download package
@@ -137,7 +137,7 @@ jobs:
         echo "status=success" >> $GITHUB_OUTPUT
 
     - name: Upload firmware to release
-      uses: softprops/action-gh-release@master
+      uses: softprops/action-gh-release@v2
       if: steps.tag.outputs.status == 'success' && !cancelled()
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -147,7 +147,7 @@ jobs:
         files: ${{ env.FIRMWARE }}/*
 
     - name: Delete workflow runs
-      uses: Mattraider/delete-workflow-runs@main
+      uses: Mattraider/delete-workflow-runs@v2
       with:
         retain_days: 1
         keep_minimum_runs: 3
