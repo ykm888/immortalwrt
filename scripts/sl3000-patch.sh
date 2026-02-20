@@ -11,9 +11,7 @@ cd "${WORKDIR}"
 # 1. 【物理指纹】
 sed -i "s/DISTRIB_DESCRIPTION='.*'/DISTRIB_DESCRIPTION='SL-3000 Exclusive'/g" package/base-files/files/etc/openwrt_release
 
-# 2. 【物理手术：彻底解决架构冲突 - 暴力裁剪版】
-# 我们不再仅仅删除定义，而是直接重写整个 uboot-mediatek 的构建循环逻辑
-# 强制将 BuildVariants 锁定为只有 sl3000-emmc
+# 2. 【物理手术：彻底解决架构冲突】
 sed -i 's/BuildVariants += $(1)/ifeq ($(1),sl3000-emmc)\n  BuildVariants += $(1)\nendif/g' package/boot/uboot-mediatek/Makefile
 
 # 3. 【物理清理】
@@ -26,7 +24,6 @@ mkdir -p "$DTS_DIR"
 cp -fv "${CONF_SRC}/mt7981b-3000-emmc.dts" "$DTS_DIR/mt7981b-3000-emmc.dts"
 
 # 5. 【Makefile 物理追加】
-# 先物理清除可能存在的旧定义，再追加新定义以实现死锁
 sed -i '/define Device\/sl3000-emmc/,/endef/d' target/linux/mediatek/image/filogic.mk || true
 cat "${CONF_SRC}/filogic.mk" >> target/linux/mediatek/image/filogic.mk
 
