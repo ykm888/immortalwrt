@@ -8,12 +8,12 @@ CONF_SRC="${REPO_ROOT}/custom-config"
 
 cd "${WORKDIR}"
 
-# 1. 【物理指纹注入】
+# 1. 【物理指纹】
 sed -i "s/DISTRIB_DESCRIPTION='.*'/DISTRIB_DESCRIPTION='SL-3000 Exclusive'/g" package/base-files/files/etc/openwrt_release
 
-# 2. 【核心物理手术：一劳永逸解决架构冲突】
-# 物理裁剪：强制删除 uboot-mediatek 中所有非 sl3000-emmc 的构建定义
-# 这确保了构建系统在遍历 package 时，物理上无法触碰 MIPS 架构的相关配置
+# 2. 【物理手术：彻底解决架构冲突】
+# 修改 uboot-mediatek 的 Makefile，物理删除所有非 sl3000-emmc 的变体定义
+# 这样 make 遍历 package 时物理上找不到 mt7620
 sed -i '/define uboot-mediatek-/,/$(eval $(call BuildPackage,uboot-mediatek-.*))/ { /sl3000-emmc/!d }' package/boot/uboot-mediatek/Makefile || true
 
 # 3. 【物理清理】
@@ -42,5 +42,4 @@ cp -fv "${CONF_SRC}/sl3000.config" .config
     echo "CONFIG_TARGET_KERNEL_PARTSIZE=131072"
     echo "CONFIG_TARGET_ROOTFS_PARTSIZE=524288"
     echo "CONFIG_DEBUG_INFO=n"
-    echo "CONFIG_RUST_SUPPORT=n"
 } >> .config
