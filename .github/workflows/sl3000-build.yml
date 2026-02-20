@@ -11,13 +11,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: 物理环境初始化 (16G Swap)
+      - name: 物理环境初始化 (16G Swap 物理重置)
         run: |
+          # 物理解决 Text file busy：强制关闭并删除现有交换文件
+          sudo swapoff -a || true
+          sudo rm -f /swapfile || true
+          
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /var/lib/docker || true
           sudo apt update && sudo apt install -y build-essential clang flex bison gawk gettext \
             git libncurses5-dev libssl-dev python3 python3-pyelftools rsync unzip \
             zlib1g-dev swig device-tree-compiler wget file tar bzip2 patch bc dos2unix
-          sudo fallocate -l 16G /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
+          
+          # 物理重新分配
+          sudo fallocate -l 16G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
 
       - name: 克隆源码 (24.10)
         run: |
@@ -51,13 +60,11 @@ jobs:
           # 提取系统固件
           find openwrt/bin/targets/mediatek/filogic/ -name "*sl3000*" -exec cp -v {} OUTPUT/ \;
           
-          # 🔥 物理提取引导程序 (FIP)
-          # 先搜 bin 目录
+          # 物理提取引导程序 (FIP)
           find openwrt/bin/targets/mediatek/filogic/ -name "*.bin" | grep -iE "fip|u-boot" -exec cp -v {} OUTPUT/ \; || true
           
-          # 兜底：如果 bin 为空，直接从编译目录物理截获
+          # 兜底截获
           if [ $(ls OUTPUT/ | grep -iE "fip|u-boot" | wc -l) -eq 0 ]; then
-            echo "FIP not in bin, performing deep physical extraction..."
             find openwrt/build_dir/ -name "*fip.bin" -exec cp -v {} OUTPUT/ \; || true
             find openwrt/build_dir/ -name "*u-boot.bin" -exec cp -v {} OUTPUT/ \; || true
           fi
