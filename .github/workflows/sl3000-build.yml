@@ -1,4 +1,4 @@
-name: SL3000_FIP_EXCLUSIVE_EXTRACT
+name: SL3000_FIP_TOTAL_REPAIR
 
 on:
   workflow_dispatch:
@@ -29,35 +29,39 @@ jobs:
           dos2unix scripts/sl3000-patch.sh && chmod +x scripts/sl3000-patch.sh
           bash -x ./scripts/sl3000-patch.sh
 
-      - name: 核心构建 (生成 U-Boot 与系统)
+      - name: 物理补全依赖链 (修复 libdeflate 报错)
         working-directory: ./openwrt
         run: |
           export DEBIAN_FRONTEND=noninteractive
           make defconfig
-          # 为了快速得到 FIP，我们优先编译 bootloader
+          # 物理锁定：必须先安装 tools 和 toolchain，否则无法解压源码
+          make tools/install -j$(nproc)
+          make toolchain/install -j$(nproc)
+
+      - name: 核心构建 (生成 U-Boot/FIP)
+        working-directory: ./openwrt
+        run: |
+          # 此时物理工具链已就绪，不再报错 No such file or directory
           make package/boot/uboot-mediatek/compile V=s -j$(nproc)
           make -j$(nproc) || make -j1 V=s
 
-      - name: 🚀 物理死锁：定向提取 FIP 固件
+      - name: 🚀 物理死锁：强力打捞 FIP
         run: |
           mkdir -p OUTPUT
+          # 策略 A：打捞 bin 目录
+          find openwrt/bin/targets/mediatek/filogic/ -type f \( -name "*fip*" -o -name "*u-boot*" -o -name "*bl2*" -o -name "*sl3000*" \) -exec cp -v {} OUTPUT/ \; || true
           
-          # 策略 A：物理打捞 bin 目录（标准路径）
-          echo "Scanning bin directory for FIP..."
-          find openwrt/bin/targets/mediatek/filogic/ -type f \( -name "*fip*" -o -name "*u-boot*" -o -name "*bl2*" \) -exec cp -v {} OUTPUT/ \; || true
-          
-          # 策略 B：物理强行打捞 build_dir（构建现场）
-          # 这是最保险的一招，即使 OpenWrt 没搬运，我们手动从源码产出目录物理截获
-          echo "Scanning build_dir for raw FIP artifacts..."
+          # 策略 B：物理现场截获 (build_dir)
+          # 如果策略 A 漏掉，直接从编译生成的物理遗址抓取
+          echo "Deep scanning build_dir for raw FIP..."
           find openwrt/build_dir/ -name "*mt7981_sl3000*fip.bin" -exec cp -v {} OUTPUT/ \; || true
           find openwrt/build_dir/ -name "*mt7981_sl3000*u-boot.bin" -exec cp -v {} OUTPUT/ \; || true
           
-          # 策略 C：系统固件备份
-          find openwrt/bin/targets/mediatek/filogic/ -name "*sl3000*sysupgrade.bin" -exec cp -v {} OUTPUT/ \; || true
+          cp -v openwrt/.config OUTPUT/sl3000.config
 
       - name: 自动发布
         uses: softprops/action-gh-release@v2
         if: success()
         with:
-          tag_name: SL3000-FIP-GOT-${{ github.run_id }}
+          tag_name: SL3000-FIXED-FIP-${{ github.run_id }}
           files: OUTPUT/*
