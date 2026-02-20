@@ -40,21 +40,22 @@ jobs:
       - name: 强制定向构建 U-Boot (物理唯一化)
         working-directory: ./openwrt
         run: |
-          # 物理清理可能存在的错误架构缓存
+          # 物理清理：彻底切断 MIPS 缓存残留
           make package/boot/uboot-mediatek/clean
-          # 此时 Makefile 已被 patch.sh 修改，只会识别 sl3000-emmc
+          # 此时 Makefile 已被物理重写，只会看到 sl3000-emmc
           make package/boot/uboot-mediatek/compile V=s -j$(nproc)
-          # 物理全量构建：确保生成 Sysupgrade 固件
+          # 物理全量构建：生成系统固件
           make -j$(nproc) || make -j1 V=s
 
-      - name: 🚀 物理死锁：精确定向提取 FIP
+      - name: 🚀 物理死锁：精确定向提取产物
         run: |
           mkdir -p OUTPUT
-          # 定向捕获 FIP/BL2
-          find openwrt/bin/targets/mediatek/filogic/ -type f \( -name "*fip*" -o -name "*u-boot*" -o -name "*bl2*" \) -exec cp -v {} OUTPUT/ \; || true
-          find openwrt/build_dir/ -name "*mt7981_sl3000*fip.bin" -exec cp -v {} OUTPUT/ \; || true
-          # 定向捕获全量固件 (Sysupgrade)
+          # 提取固件
           find openwrt/bin/targets/mediatek/filogic/ -name "*sl3000*sysupgrade.bin" -exec cp -v {} OUTPUT/ \; || true
+          # 提取引导 (FIP/BL2)
+          find openwrt/bin/targets/mediatek/filogic/ -type f \( -name "*fip*" -o -name "*u-boot*" -o -name "*bl2*" \) -exec cp -v {} OUTPUT/ \; || true
+          # 物理兜底提取
+          find openwrt/build_dir/ -name "*mt7981_sl3000*fip.bin" -exec cp -v {} OUTPUT/ \; || true
           cp -v openwrt/.config OUTPUT/sl3000.config
 
       - name: 自动发布
