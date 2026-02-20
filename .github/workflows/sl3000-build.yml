@@ -26,6 +26,7 @@ jobs:
 
       - name: 执行物理修复补丁 (架构强力隔离)
         run: |
+          # 物理对齐：确保脚本具备执行权限并修复换行符
           dos2unix scripts/sl3000-patch.sh && chmod +x scripts/sl3000-patch.sh
           bash -x ./scripts/sl3000-patch.sh
 
