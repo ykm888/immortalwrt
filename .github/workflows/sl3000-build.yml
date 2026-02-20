@@ -25,7 +25,7 @@ jobs:
       uses: actions/checkout@main
 
     - name: Initialization environment
-      envs:
+      env:
         DEBIAN_FRONTEND: noninteractive
       run: |
         sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/powershell /usr/share/swift /usr/local/etc/vcpkg /usr/local/bin/terraform
@@ -67,22 +67,21 @@ jobs:
     - name: Custom Patch & Physical Fix
       run: |
         cd openwrt
-        # 物理修复：彻底解决 aarch64 编译器遇到 MIPS -mabi=32 错误
-        # 强制锁定 uboot-mediatek 变体，物理删除所有 MIPS 变体定义
+        # 【物理手术】彻底解决 aarch64 编译器遇到 MIPS -mabi=32 错误
         UBOOT_MAKEFILE="package/boot/uboot-mediatek/Makefile"
         if [ -f "$UBOOT_MAKEFILE" ]; then
-          # 1. 删除所有现有的 BuildVariants 定义行（包括追加行）
+          # 物理清空：删除所有变体定义行，防止 MIPS 目标进入循环
           sed -i '/BuildVariants [+: ]=/d' "$UBOOT_MAKEFILE"
-          # 2. 在规则包含行之前，物理注入唯一的 ARM64 SL3000 变体定义
+          # 物理注入：强行锁定唯一的 ARM64 变体
           sed -i '/include $(INCLUDE_DIR)\/package.mk/i BuildVariants := mt7981_sl3000-emmc' "$UBOOT_MAKEFILE"
-          echo "Physical fix applied: BuildVariants locked to mt7981_sl3000-emmc"
+          echo "Physical fix: BuildVariants locked to mt7981_sl3000-emmc"
         fi
         
-        # 强制修正 .config 确保不触发 MIPS 变体构建
-        sed -i 's/CONFIG_PACKAGE_uboot-mediatek-.*=y/# CONFIG_PACKAGE_uboot-mediatek-.* is not set/g' .config
+        # 物理锁死 .config
+        sed -i 's/CONFIG_PACKAGE_uboot-mediatek-.*=y/# CONFIG_PACKAGE_uboot-mediatek- is not set/g' .config
         echo "CONFIG_PACKAGE_uboot-mediatek-mt7981_sl3000-emmc=y" >> .config
         
-        # 执行原有的补丁逻辑
+        # 执行用户自定义补丁
         [ -e $GITHUB_WORKSPACE/sl3000-patch.sh ] && /bin/bash $GITHUB_WORKSPACE/sl3000-patch.sh
 
     - name: Download package
@@ -101,7 +100,6 @@ jobs:
         echo -e "$(nproc) thread compile"
         make -j$(nproc) || make -j1 || make -j1 V=s
         echo "status=success" >> $GITHUB_OUTPUT
-        grep "grep: /workdir/openwrt/.config" /workdir/openwrt/.config || true
 
     - name: Check space usage
       if: (!cancelled())
@@ -111,7 +109,7 @@ jobs:
       uses: actions/upload-artifact@main
       if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
       with:
-        name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        name: OpenWrt_bin${{ env.FILE_DATE }}
         path: openwrt/bin
 
     - name: Organize files
@@ -127,7 +125,7 @@ jobs:
       uses: actions/upload-artifact@main
       if: steps.organize.outputs.status == 'success' && !cancelled()
       with:
-        name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        name: OpenWrt_firmware${{ env.FILE_DATE }}
         path: ${{ env.FIRMWARE }}
 
     - name: Generate release tag
