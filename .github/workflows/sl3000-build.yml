@@ -1,66 +1,164 @@
-name: SL3000_FIP_MANDATORY_FIX
+name: Build ImmortalWrt SL3000
 
 on:
+  repository_dispatch:
   workflow_dispatch:
+
+env:
+  REPO_URL: https://github.com/immortalwrt/immortalwrt
+  REPO_BRANCH: openwrt-24.10
+  FEEDS_CONF: feeds.conf.default
+  CONFIG_FILE: .config
+  DIY_P1_SH: diy-part1.sh
+  DIY_P2_SH: diy-part2.sh
+  UPLOAD_BIN_DIR: false
+  UPLOAD_FIRMWARE: true
+  UPLOAD_RELEASE: true
+  TZ: Asia/Shanghai
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
+
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+    - name: Checkout
+      uses: actions/checkout@main
 
-      - name: 物理环境初始化 (16G Swap)
-        run: |
-          sudo swapoff -a || true
-          sudo rm -f /swapfile || true
-          sudo apt update && sudo apt install -y build-essential clang flex bison gawk gettext \
-            git libncurses5-dev libssl-dev python3 python3-pyelftools rsync unzip \
-            zlib1g-dev swig device-tree-compiler wget file tar bzip2 patch bc dos2unix
-          sudo fallocate -l 16G /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
+    - name: Initialization environment
+      envs:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/powershell /usr/share/swift /usr/local/etc/vcpkg /usr/local/bin/terraform
+        sudo -E apt-get -qq update
+        sudo -E apt-get -qq install $(curl -fsSL https://raw.githubusercontent.com/ant0ny-z/OpenWrt-Action/master/setup-ubuntu-24.04)
+        sudo -E apt-get -qq autoremove --purge
+        sudo -E apt-get -qq clean
+        sudo timedatectl set-timezone "$TZ"
+        sudo mkdir -p /workdir
+        sudo chown $USER:$GROUPS /workdir
 
-      - name: 克隆源码 (24.10)
-        run: |
-          git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git openwrt
-          cd openwrt && ./scripts/feeds update -a && ./scripts/feeds install -a
+    - name: Clone source code
+      working-directory: /workdir
+      run: |
+        df -hT $PWD
+        git clone $REPO_URL -b $REPO_BRANCH openwrt
+        ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
-      - name: 执行物理修复补丁 (架构强力隔离)
-        run: |
-          dos2unix scripts/sl3000-patch.sh && chmod +x scripts/sl3000-patch.sh
-          bash -x ./scripts/sl3000-patch.sh
+    - name: Load custom feeds
+      run: |
+        [ -e $FEEDS_CONF ] && cp $FEEDS_CONF openwrt/feeds.conf.default
+        chmod +x $DIY_P1_SH
+        cd openwrt
+        $GITHUB_WORKSPACE/$DIY_P1_SH
 
-      - name: 物理依赖构建
-        working-directory: ./openwrt
-        run: |
-          export DEBIAN_FRONTEND=noninteractive
-          make defconfig
-          make tools/install -j$(nproc)
-          make toolchain/install -j$(nproc)
+    - name: Update feeds
+      run: cd openwrt && ./scripts/feeds update -a
 
-      - name: 强制定向构建 U-Boot (物理唯一化)
-        working-directory: ./openwrt
-        run: |
-          # 物理清理：彻底切断 MIPS 缓存残留
-          make package/boot/uboot-mediatek/clean
-          # 此时 Makefile 已被物理重写，只会看到 sl3000-emmc
-          make package/boot/uboot-mediatek/compile V=s -j$(nproc)
-          # 物理全量构建：生成系统固件
-          make -j$(nproc) || make -j1 V=s
+    - name: Install feeds
+      run: cd openwrt && ./scripts/feeds install -a
 
-      - name: 🚀 物理死锁：精确定向提取产物
-        run: |
-          mkdir -p OUTPUT
-          # 提取固件
-          find openwrt/bin/targets/mediatek/filogic/ -name "*sl3000*sysupgrade.bin" -exec cp -v {} OUTPUT/ \; || true
-          # 提取引导 (FIP/BL2)
-          find openwrt/bin/targets/mediatek/filogic/ -type f \( -name "*fip*" -o -name "*u-boot*" -o -name "*bl2*" \) -exec cp -v {} OUTPUT/ \; || true
-          # 物理兜底提取
-          find openwrt/build_dir/ -name "*mt7981_sl3000*fip.bin" -exec cp -v {} OUTPUT/ \; || true
-          cp -v openwrt/.config OUTPUT/sl3000.config
+    - name: Load custom configuration
+      run: |
+        [ -e $CONFIG_FILE ] && cp $CONFIG_FILE openwrt/.config
+        chmod +x $DIY_P2_SH
+        cd openwrt
+        $GITHUB_WORKSPACE/$DIY_P2_SH
 
-      - name: 自动发布
-        uses: softprops/action-gh-release@v2
-        if: success()
-        with:
-          tag_name: SL3000-FIP-FORCED-${{ github.run_id }}
-          files: OUTPUT/*
+    - name: Custom Patch & Physical Fix
+      run: |
+        cd openwrt
+        # 物理修复：彻底解决 aarch64 编译器遇到 MIPS -mabi=32 错误
+        # 强制锁定 uboot-mediatek 变体，物理删除所有 MIPS 变体定义
+        UBOOT_MAKEFILE="package/boot/uboot-mediatek/Makefile"
+        if [ -f "$UBOOT_MAKEFILE" ]; then
+          # 1. 删除所有现有的 BuildVariants 定义行（包括追加行）
+          sed -i '/BuildVariants [+: ]=/d' "$UBOOT_MAKEFILE"
+          # 2. 在规则包含行之前，物理注入唯一的 ARM64 SL3000 变体定义
+          sed -i '/include $(INCLUDE_DIR)\/package.mk/i BuildVariants := mt7981_sl3000-emmc' "$UBOOT_MAKEFILE"
+          echo "Physical fix applied: BuildVariants locked to mt7981_sl3000-emmc"
+        fi
+        
+        # 强制修正 .config 确保不触发 MIPS 变体构建
+        sed -i 's/CONFIG_PACKAGE_uboot-mediatek-.*=y/# CONFIG_PACKAGE_uboot-mediatek-.* is not set/g' .config
+        echo "CONFIG_PACKAGE_uboot-mediatek-mt7981_sl3000-emmc=y" >> .config
+        
+        # 执行原有的补丁逻辑
+        [ -e $GITHUB_WORKSPACE/sl3000-patch.sh ] && /bin/bash $GITHUB_WORKSPACE/sl3000-patch.sh
+
+    - name: Download package
+      id: package
+      run: |
+        cd openwrt
+        make defconfig
+        make download -j8
+        find dl -size -1024c -exec ls -l {} \;
+        find dl -size -1024c -exec rm -f {} \;
+
+    - name: Compile the firmware
+      id: compile
+      run: |
+        cd openwrt
+        echo -e "$(nproc) thread compile"
+        make -j$(nproc) || make -j1 || make -j1 V=s
+        echo "status=success" >> $GITHUB_OUTPUT
+        grep "grep: /workdir/openwrt/.config" /workdir/openwrt/.config || true
+
+    - name: Check space usage
+      if: (!cancelled())
+      run: df -hT
+
+    - name: Upload bin directory
+      uses: actions/upload-artifact@main
+      if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
+      with:
+        name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        path: openwrt/bin
+
+    - name: Organize files
+      id: organize
+      if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
+      run: |
+        cd openwrt/bin/targets/*/*
+        rm -rf packages
+        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+        echo "status=success" >> $GITHUB_OUTPUT
+
+    - name: Upload firmware directory
+      uses: actions/upload-artifact@main
+      if: steps.organize.outputs.status == 'success' && !cancelled()
+      with:
+        name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        path: ${{ env.FIRMWARE }}
+
+    - name: Generate release tag
+      id: tag
+      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+      run: |
+        echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
+        touch release.txt
+        echo "status=success" >> $GITHUB_OUTPUT
+
+    - name: Upload firmware to release
+      uses: softprops/action-gh-release@master
+      if: steps.tag.outputs.status == 'success' && !cancelled()
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ steps.tag.outputs.release_tag }}
+        body_path: release.txt
+        files: ${{ env.FIRMWARE }}/*
+
+    - name: Delete workflow runs
+      uses: Mattraider/delete-workflow-runs@main
+      with:
+        retain_days: 1
+        keep_minimum_runs: 3
+
+    - name: Remove old Releases
+      uses: dev-drprasad/delete-older-releases@master
+      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+      with:
+        keep_latest: 3
+        delete_tags: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
