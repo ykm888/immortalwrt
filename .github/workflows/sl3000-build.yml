@@ -26,7 +26,6 @@ jobs:
 
       - name: 执行物理修复补丁 (架构强力隔离)
         run: |
-          # 物理对齐：确保脚本具备执行权限并修复换行符
           dos2unix scripts/sl3000-patch.sh && chmod +x scripts/sl3000-patch.sh
           bash -x ./scripts/sl3000-patch.sh
 
@@ -45,14 +44,16 @@ jobs:
           make package/boot/uboot-mediatek/clean
           # 此时 Makefile 已被 patch.sh 修改，只会识别 sl3000-emmc
           make package/boot/uboot-mediatek/compile V=s -j$(nproc)
+          # 物理全量构建：确保生成 Sysupgrade 固件
           make -j$(nproc) || make -j1 V=s
 
       - name: 🚀 物理死锁：精确定向提取 FIP
         run: |
           mkdir -p OUTPUT
-          # 定向捕获 mt7981 架构产物，物理排除 mt7620 干扰
+          # 定向捕获 FIP/BL2
           find openwrt/bin/targets/mediatek/filogic/ -type f \( -name "*fip*" -o -name "*u-boot*" -o -name "*bl2*" \) -exec cp -v {} OUTPUT/ \; || true
           find openwrt/build_dir/ -name "*mt7981_sl3000*fip.bin" -exec cp -v {} OUTPUT/ \; || true
+          # 定向捕获全量固件 (Sysupgrade)
           find openwrt/bin/targets/mediatek/filogic/ -name "*sl3000*sysupgrade.bin" -exec cp -v {} OUTPUT/ \; || true
           cp -v openwrt/.config OUTPUT/sl3000.config
 
