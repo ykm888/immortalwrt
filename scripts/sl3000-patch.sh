@@ -26,6 +26,7 @@ mkdir -p "$DTS_DIR"
 cp -fv "${CONF_SRC}/mt7981b-3000-emmc.dts" "$DTS_DIR/mt7981b-3000-emmc.dts"
 
 # 5. 【Makefile 物理追加】
+# 先物理清除可能存在的旧定义，再追加新定义以实现死锁
 sed -i '/define Device\/sl3000-emmc/,/endef/d' target/linux/mediatek/image/filogic.mk || true
 cat "${CONF_SRC}/filogic.mk" >> target/linux/mediatek/image/filogic.mk
 
