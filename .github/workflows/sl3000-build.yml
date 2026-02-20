@@ -67,22 +67,19 @@ jobs:
     - name: Custom Patch & Physical Fix
       run: |
         cd openwrt
-        # 【物理手术】彻底解决 aarch64 编译器遇到 MIPS -mabi=32 错误
+        # 物理手术：延续之前的设置，封杀 -mabi=32 错误
         UBOOT_MAKEFILE="package/boot/uboot-mediatek/Makefile"
         if [ -f "$UBOOT_MAKEFILE" ]; then
-          # 物理清空原有型号，防止架构污染
           sed -i '/BuildVariants [+: ]=/d' "$UBOOT_MAKEFILE"
-          # 物理锁定唯一目标
           sed -i '/include $(INCLUDE_DIR)\/package.mk/i BuildVariants := mt7981_sl3000-emmc' "$UBOOT_MAKEFILE"
-          echo "Physical fix applied."
         fi
         
-        # 物理修正 .config
+        # 物理锁死配置环境
         sed -i 's/CONFIG_PACKAGE_uboot-mediatek-.*=y/# CONFIG_PACKAGE_uboot-mediatek- is not set/g' .config
         echo "CONFIG_PACKAGE_uboot-mediatek-mt7981_sl3000-emmc=y" >> .config
         
-        # 执行脚本补丁
-        [ -e $GITHUB_WORKSPACE/sl3000-patch.sh ] && /bin/bash $GITHUB_WORKSPACE/sl3000-patch.sh
+        # 执行脚本
+        [ -e $GITHUB_WORKSPACE/scripts/sl3000-patch.sh ] && /bin/bash $GITHUB_WORKSPACE/scripts/sl3000-patch.sh
 
     - name: Download package
       id: package
@@ -147,7 +144,7 @@ jobs:
         files: ${{ env.FIRMWARE }}/*
 
     - name: Delete workflow runs
-      uses: Mattraider/delete-workflow-runs@v2
+      uses: AkaSaito/delete-workflow-runs@v1
       with:
         retain_days: 1
         keep_minimum_runs: 3
