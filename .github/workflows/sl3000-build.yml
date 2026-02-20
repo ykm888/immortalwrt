@@ -1,4 +1,4 @@
-name: SL3000_Total_Fix_Final
+name: SL3000_Ultimate_One_Shot_Build
 
 on:
   workflow_dispatch:
@@ -13,7 +13,7 @@ jobs:
 
       - name: 物理环境初始化 (16G Swap 彻底重置)
         run: |
-          # 物理解决 Text file busy：强制解除旧 Swap 锁定
+          # 物理解决 Text file busy
           sudo swapoff -a || true
           sudo rm -f /swapfile || true
           
@@ -22,7 +22,6 @@ jobs:
             git libncurses5-dev libssl-dev python3 python3-pyelftools rsync unzip \
             zlib1g-dev swig device-tree-compiler wget file tar bzip2 patch bc dos2unix
           
-          # 物理空间分配
           sudo fallocate -l 16G /swapfile
           sudo chmod 600 /swapfile
           sudo mkswap /swapfile
@@ -33,19 +32,19 @@ jobs:
           git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git openwrt
           cd openwrt && ./scripts/feeds update -a && ./scripts/feeds install -a
 
-      - name: 执行物理修复补丁
+      - name: 执行物理修复补丁 (架构隔离手术)
         run: |
           dos2unix scripts/sl3000-patch.sh && chmod +x scripts/sl3000-patch.sh
           bash -x ./scripts/sl3000-patch.sh
 
-      - name: 步骤 1：构建工具链与 U-Boot (物理锁定语法)
+      - name: 步骤 1：构建工具链与 U-Boot
         working-directory: ./openwrt
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          yes "" | make defconfig
+          make defconfig
           make tools/install -j$(nproc)
           make toolchain/install -j$(nproc)
-          # 物理锁定语法：由 .config 驱动，仅编译已通过裁剪的 U-Boot 包
+          # 🔥 物理锁定：由于 Makefile 已被物理裁剪，此处只会编译 sl3000-emmc 变体
           make package/boot/uboot-mediatek/compile V=s -j$(nproc)
 
       - name: 步骤 2：生成全量固件
@@ -63,8 +62,9 @@ jobs:
           # 2. 物理提取引导程序 (FIP)
           find openwrt/bin/targets/mediatek/filogic/ -name "*.bin" | grep -iE "fip|u-boot|bl2" -exec cp -v {} OUTPUT/ \; || true
           
-          # 3. 兜底提取 (硬核现场打捞)
+          # 3. 兜底截获：如果 bin 目录为空，直接从编译缓冲区物理现场打捞
           if [ $(ls OUTPUT/ | grep -iE "fip|u-boot" | wc -l) -eq 0 ]; then
+            echo "FIP not in bin, diving into build_dir..."
             find openwrt/build_dir/ -name "*fip.bin" -exec cp -v {} OUTPUT/ \; || true
             find openwrt/build_dir/ -name "*u-boot.bin" -exec cp -v {} OUTPUT/ \; || true
           fi
@@ -75,5 +75,5 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: success()
         with:
-          tag_name: SL3000-Final-Fixed-${{ github.run_id }}
+          tag_name: SL3000-Final-UBOOT-FIX-${{ github.run_id }}
           files: OUTPUT/*
