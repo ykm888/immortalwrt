@@ -8,26 +8,28 @@ CONF_SRC="${REPO_ROOT}/custom-config"
 
 cd "${WORKDIR}"
 
-# 1. 【物理指纹】
+# 1. 【物理指纹注入】
 sed -i "s/DISTRIB_DESCRIPTION='.*'/DISTRIB_DESCRIPTION='SL-3000 Exclusive'/g" package/base-files/files/etc/openwrt_release
 
-# 2. 【物理唯一化清理】彻底解决 MIPS 架构报错
-# 物理裁剪：从 U-Boot Makefile 中删除非 sl3000 的所有变体，确保编译器不跑偏
-sed -i '/define uboot-mediatek-/,/endef/ { /sl3000-emmc/!d }' package/boot/uboot-mediatek/Makefile || true
+# 2. 【核心物理手术：一劳永逸解决架构冲突】
+# 物理裁剪：强制删除 uboot-mediatek 中所有非 sl3000-emmc 的构建定义
+# 这确保了构建系统在遍历 package 时，物理上无法触碰 MIPS 架构的相关配置
+sed -i '/define uboot-mediatek-/,/$(eval $(call BuildPackage,uboot-mediatek-.*))/ { /sl3000-emmc/!d }' package/boot/uboot-mediatek/Makefile || true
 
+# 3. 【物理清理】
 find package/feeds/packages/ -name "*selinux*" -exec rm -rf {} + || true
 rm -rf package/feeds/packages/python-semanage package/system/refpolicy package/system/selinux-policy package/utils/audit package/utils/policycoreutils package/libs/libsemanage package/boot/arm-trusted-firmware-microchipsw || true
 
-# 3. 【DTS 物理路径死锁】
+# 4. 【DTS 物理路径死锁】
 DTS_DIR="target/linux/mediatek/files-6.6/arch/arm64/boot/dts/mediatek/mediatek"
 mkdir -p "$DTS_DIR"
 cp -fv "${CONF_SRC}/mt7981b-3000-emmc.dts" "$DTS_DIR/mt7981b-3000-emmc.dts"
 
-# 4. 【Makefile 物理追加】
+# 5. 【Makefile 物理追加】
 sed -i '/define Device\/sl3000-emmc/,/endef/d' target/linux/mediatek/image/filogic.mk || true
 cat "${CONF_SRC}/filogic.mk" >> target/linux/mediatek/image/filogic.mk
 
-# 5. 【.config 物理死锁补强】
+# 6. 【.config 物理死锁】
 cp -fv "${CONF_SRC}/sl3000.config" .config
 {
     echo "CONFIG_TARGET_mediatek=y"
