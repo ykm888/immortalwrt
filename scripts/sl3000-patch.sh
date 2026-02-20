@@ -11,8 +11,11 @@ cd "${WORKDIR}"
 # 1. 【物理指纹】
 sed -i "s/DISTRIB_DESCRIPTION='.*'/DISTRIB_DESCRIPTION='SL-3000 Exclusive'/g" package/base-files/files/etc/openwrt_release
 
-# 2. 【物理手术：彻底解决架构冲突】
-sed -i 's/BuildVariants += $(1)/ifeq ($(1),sl3000-emmc)\n  BuildVariants += $(1)\nendif/g' package/boot/uboot-mediatek/Makefile
+# 2. 【物理手术：终极隔离解决 - 物理抹除法】
+# 物理删除所有 BuildVariants 的追加逻辑，彻底杜绝 MIPS (mt7620) 进入构建队列
+sed -i '/BuildVariants +=/d' package/boot/uboot-mediatek/Makefile
+# 物理锁定：在模板定义前直接硬编码唯一的变体
+sed -i '/define BuildVariant/i BuildVariants := sl3000-emmc' package/boot/uboot-mediatek/Makefile
 
 # 3. 【物理清理】
 find package/feeds/packages/ -name "*selinux*" -exec rm -rf {} + || true
