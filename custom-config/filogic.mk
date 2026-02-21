@@ -20,3 +20,8 @@ define Device/sl3000-emmc
   IMAGE/sysupgrade.bin := append-kernel | pad-to 134217728 | append-rootfs | check-size | append-metadata
 endef
 TARGET_DEVICES += sl3000-emmc
+
+# 物理修复：针对 uboot-mediatek 报错点的 sed 修复指令
+# 注意：以下内容通常应在 package/boot/uboot-mediatek/Makefile 中执行
+# 修复了原先缺失的闭合斜杠 / 并在行尾插入
+# sed -i '/dtb- +=/ s/$$/ mt7981-sl3000-emmc.dtb/' $(PKG_BUILD_DIR)/arch/arm/dts/Makefile
