@@ -1,5 +1,5 @@
 #!/bin/bash
-# 物理熔断：SL3000 24.10 最高级物理绝杀版 (Cat-Overdrive 模式)
+# 物理熔断：SL3000 24.10 “包内物理隔离”绝杀版
 set -eo pipefail
 
 REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -21,12 +21,16 @@ printf 'src-git luci https://github.com/immortalwrt/luci.git\n' >> feeds.conf.de
 mkdir -p dl
 wget -t 5 -T 20 "https://github.com/u-boot/u-boot/archive/refs/tags/v2024.10.tar.gz" -O "dl/u-boot-2024.10.tar.gz"
 
-# 4. 🔥 [物理绝杀：最高级 Makefile 物理覆盖]
+# 4. 🔥 [物理绝杀：Makefile 内部路径硬隔离修复]
 UB_DIR="package/boot/uboot-mediatek"
-mkdir -p "$UB_DIR"
+mkdir -p "$UB_DIR/files"
 rm -rf "$UB_DIR/patches"
 
-# 物理重构整个 Makefile，解决 printf 转义导致的语法崩溃
+# 物理同步：先将 DTS 移动到包内的 files 目录，彻底解决路径逃逸
+if [ -f "${SRC_DIR}/mt7981b-3000-emmc.dts" ]; then
+    cp -v "${SRC_DIR}/mt7981b-3000-emmc.dts" "$UB_DIR/files/sl3000.dts"
+fi
+
 cat << 'EOF' > "$UB_DIR/Makefile"
 include $(TOPDIR)/rules.mk
 include $(INCLUDE_DIR)/kernel.mk
@@ -42,7 +46,7 @@ include $(INCLUDE_DIR)/package.mk
 define Package/uboot-mediatek-mt7981-sl3000-emmc
   SECTION:=boot
   CATEGORY:=Boot Loader
-  TITLE:=U-Boot for SL3000 (Physical Fix Edition)
+  TITLE:=U-Boot for SL3000 (Isolate Physical Fix)
   DEPENDS:=@TARGET_mediatek
 endef
 
@@ -53,13 +57,13 @@ define Build/Prepare
 	echo "#define CFG_SYS_INIT_RAM_SIZE 0x00040000" >> $(PKG_BUILD_DIR)/include/configs/mt7981.h
 	echo "#define CFG_SYS_INIT_SP_ADDR (CFG_SYS_INIT_RAM_ADDR + CFG_SYS_INIT_RAM_SIZE - 0x10)" >> $(PKG_BUILD_DIR)/include/configs/mt7981.h
 	
-	# 物理注入 2：DTS 源码同步
-	cp $(TOPDIR)/../custom-config/mt7981b-3000-emmc.dts $(PKG_BUILD_DIR)/arch/arm/dts/mt7981-sl3000-emmc.dts
+	# 物理注入 2：DTS 源码同步 (从包内 files 目录物理拷贝，不再依赖外部路径)
+	cp ./files/sl3000.dts $(PKG_BUILD_DIR)/arch/arm/dts/mt7981-sl3000-emmc.dts
 	
 	# 物理注入 3：Makefile 目标注册
 	sed -i '/dtb-$$(CONFIG_ARCH_MEDIATEK) +=/ s/$$/ mt7981-sl3000-emmc.dtb/' $(PKG_BUILD_DIR)/arch/arm/dts/Makefile
 	
-	# 物理注入 4：Defconfig 模板生成
+	# 物理注入 4：Defconfig 生成
 	cp $(PKG_BUILD_DIR)/configs/mt7981_emmc_rfb_defconfig $(PKG_BUILD_DIR)/configs/mt7981_sl3000_emmc_defconfig
 	sed -i 's/DEFAULT_DEVICE_TREE=.*/DEFAULT_DEVICE_TREE="mt7981-sl3000-emmc"/' $(PKG_BUILD_DIR)/configs/mt7981_sl3000_emmc_defconfig
 	echo "CONFIG_TEXT_BASE=0x41e00000" >> $(PKG_BUILD_DIR)/configs/mt7981_sl3000_emmc_defconfig
