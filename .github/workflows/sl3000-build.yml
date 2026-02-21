@@ -20,34 +20,22 @@ jobs:
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /var/lib/docker /usr/local/share/powershell /usr/share/swift /usr/local/.ghcup /usr/lib/jvm || true
           sudo apt clean
-          sudo rm -rf /var/lib/apt/lists/*
 
-      - name: "📦 步骤2：全依赖物理绝杀 (含 CMake 3.31 升级)"
+      - name: "📦 步骤2：全依赖物理绝杀 (CMake 升级)"
         run: |
           sudo apt update
-          sudo apt install -y build-essential clang flex bison gawk gettext \
-            git libncurses5-dev libssl-dev python3-pyelftools rsync unzip swig \
-            device-tree-compiler wget curl tar pkg-config cmake \
-            libgnutls28-dev uuid-dev libelf-dev bc
-          
-          # 🔥 物理升级 CMake：彻底解决 rpcd-mod-luci 版本要求
+          sudo apt install -y build-essential clang flex bison gawk gettext git libncurses5-dev libssl-dev python3-pyelftools rsync unzip swig device-tree-compiler wget curl tar pkg-config libgnutls28-dev uuid-dev libelf-dev bc
           wget -q https://github.com/Kitware/CMake/releases/download/v3.31.5/cmake-3.31.5-linux-x86_64.sh
           sudo sh cmake-3.31.5-linux-x86_64.sh --skip-license --prefix=/usr/local
           sudo ln -sf /usr/local/bin/cmake /usr/bin/cmake
           cmake --version
-
           sudo swapoff /swapfile || true
-          if [ ! -f /swapfile ]; then
-            sudo fallocate -l 16G /swapfile
-            sudo chmod 600 /swapfile
-            sudo mkswap /swapfile
-          fi
-          sudo swapon /swapfile
+          sudo fallocate -l 16G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
 
-      - name: "📂 步骤3：源码克隆 (锁定 24.10)"
+      - name: "📂 步骤3：源码克隆"
         run: git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git openwrt
 
-      - name: "⚡ 步骤4：物理外科手术 (执行物理隔离补丁)"
+      - name: "⚡ 步骤4：物理外科手术 (执行非 EOF 补丁)"
         run: |
           chmod +x scripts/sl3000-patch.sh
           ./scripts/sl3000-patch.sh
@@ -62,6 +50,7 @@ jobs:
       - name: "🔨 步骤6：引导程序绝杀编译"
         working-directory: ./openwrt
         run: |
+          make package/boot/arm-trusted-firmware-mediatek/compile V=s -j1
           make package/boot/uboot-mediatek/compile V=s -j1
           make -j$(nproc) || make -j1 V=s
 
@@ -69,23 +58,19 @@ jobs:
         run: |
           mkdir -p "dist"
           find openwrt/bin/targets/mediatek/ -type f -name "*3000-emmc*sysupgrade.bin" -exec cp -v {} dist/SL3000-Firmware.bin \;
-          find openwrt/bin/packages/aarch64_cortex-a53/base/ -type f -name "*uboot-mediatek*" -exec cp -v {} dist/ \; || true
-          
-          RAW_UBOOT=$(find openwrt/build_dir/target-aarch64_cortex-a53_musl/u-boot-2024.10/ -type f -name "u-boot.bin" | head -n 1)
-          if [ -n "$RAW_UBOOT" ]; then
-            cp -v "$RAW_UBOOT" dist/u-boot-sl3000-raw.bin
-          fi
+          find openwrt/bin/targets/mediatek/ -type f -name "*bl2.img" -exec cp -v {} dist/ \;
+          find openwrt/bin/targets/mediatek/ -type f -name "*u-boot.bin" -exec cp -v {} dist/ \;
           cp -v openwrt/.config dist/config.txt
 
       - name: "🚀 步骤8：发布产物"
         uses: softprops/action-gh-release@v2
         if: success()
         with:
-          tag_name: SL3000-24.10-FullFix-${{ github.run_number }}
+          tag_name: SL3000-24.10-NO-EOF-FIX-${{ github.run_number }}
           files: dist/*
           body: |
-            SL3000 24.10 环境+源码全修复版
-            - 环境：CMake 物理升级至 3.31.5 (解决 rpcd-mod-luci 报错)
-            - 源码：U-Boot 包内隔离补丁生效，DTS 路径完全锁定
+            SL3000 24.10 物理绝杀（非 EOF 模式）
+            - 策略：使用 printf 强制物理注入 Makefile。
+            - 修复：CMake 3.31.5, U-Boot 2024.10, ATF 2025.07。
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
