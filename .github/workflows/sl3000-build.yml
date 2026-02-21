@@ -1,113 +1,79 @@
-name: Build ImmortalWrt for SL3000-eMMC
+name: SL3000_Ultimate_Step_Build_24.10
 
 on:
-  repository_dispatch:
   workflow_dispatch:
 
 env:
-  REPO_URL: https://github.com/immortalwrt/immortalwrt
-  REPO_BRANCH: master
-  CONFIG_FILE: .config
-  DIY_P1_SH: diy-part1.sh
-  DIY_P2_SH: diy-part2.sh
-  SSH_ACTIONS: false
-  UPLOAD_BIN_DIR: false
-  UPLOAD_FIRMWARE: true
-  UPLOAD_RELEASE: true
+  FORCE_UNSAFE_CONFIGURE: 1
+  NON_INTERACTIVE: 1
   TZ: Asia/Shanghai
 
 jobs:
   build:
     runs-on: ubuntu-22.04
-
+    permissions:
+      contents: write
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Initialization environment
-      env:
-        DEBIAN_FRONTEND: noninteractive
-      run: |
-        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
-        sudo -E apt-get -qq update
-        sudo -E apt-get -qq install $(curl -fsSL https://is.gd/depends_ubuntu_2204)
-        sudo -E apt-get -qq autoremove --purge
-        sudo -E apt-get -qq clean
-        sudo timedatectl set-timezone "$TZ"
-        sudo mkdir -p /workdir
-        sudo chown $USER:$GROUPS /workdir
+      - name: "🚀 步骤1：磁盘优化"
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /var/lib/docker /usr/local/share/powershell /usr/share/swift /usr/local/.ghcup /usr/lib/jvm || true
+          sudo apt clean
 
-    - name: Clone source code
-      working-directory: /workdir
-      run: |
-        df -hT $PWD
-        git clone $REPO_URL -b $REPO_BRANCH openwrt
-        ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
+      - name: "📦 步骤2：CMake & Swap"
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential clang flex bison gawk gettext git libncurses5-dev libssl-dev python3-pyelftools rsync unzip swig device-tree-compiler wget curl tar pkg-config libgnutls28-dev uuid-dev libelf-dev bc
+          wget -q https://github.com/Kitware/CMake/releases/download/v3.31.5/cmake-3.31.5-linux-x86_64.sh
+          sudo sh cmake-3.31.5-linux-x86_64.sh --skip-license --prefix=/usr/local
+          sudo ln -sf /usr/local/bin/cmake /usr/bin/cmake
+          sudo swapoff /swapfile || true
+          sudo fallocate -l 16G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
 
-    - name: Update & Install feeds
-      run: |
-        cd openwrt
-        ./scripts/feeds update -a
-        ./scripts/feeds install -a
+      - name: "📂 步骤3：源码克隆"
+        run: git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git openwrt
 
-    - name: Load custom configuration
-      run: |
-        [ -e $CONFIG_FILE ] && cp $CONFIG_FILE openwrt/.config
-        cd openwrt
-        # 物理注入：不使用 EOF，通过 printf 延续原文定义
-        TARGET_MK="target/linux/mediatek/image/filogic.mk"
-        printf "\ndefine Device/sl3000-emmc\n" >> $TARGET_MK
-        printf "  DEVICE_VENDOR := SL\n" >> $TARGET_MK
-        printf "  DEVICE_MODEL := 3000-eMMC\n" >> $TARGET_MK
-        printf "  DEVICE_DTS := mt7981b-3000-emmc\n" >> $TARGET_MK
-        printf "  DEVICE_DTS_DIR := \$(DTS_DIR)/mediatek\n" >> $TARGET_MK
-        printf "  SUPPORTED_DEVICES := sl,3000-emmc\n\n" >> $TARGET_MK
-        printf "  # 物理死锁：字节纯数字，防止 dd 报错\n" >> $TARGET_MK
-        printf "  KERNEL_SIZE := 134217728\n" >> $TARGET_MK
-        printf "  IMAGE_SIZE := 536870912\n\n" >> $TARGET_MK
-        printf "  KERNEL := kernel-bin | lzma | append-dtb\n" >> $TARGET_MK
-        printf "  DEVICE_PACKAGES := kmod-mmc kmod-mtk-sd kmod-fs-f2fs f2fs-tools f2fsck \\\\\n" >> $TARGET_MK
-        printf "                    parted lsblk blkid block-mount kmod-zram zram-swap \\\\\n" >> $TARGET_MK
-        printf "                    luci-app-diskman uboot-envtools\n\n" >> $TARGET_MK
-        printf "  # 物理修复：移除导致 Missing Build 报错保持一致\n" >> $TARGET_MK
-        printf "  IMAGES := sysupgrade.bin\n" >> $TARGET_MK
-        printf "  IMAGE/sysupgrade.bin := append-kernel | pad-to 134217728 | append-rootfs | check-size | append-metadata\n" >> $TARGET_MK
-        printf "endef\n" >> $TARGET_MK
-        printf "TARGET_DEVICES += sl3000-emmc\n" >> $TARGET_MK
+      - name: "⚡ 步骤4：执行物理补丁 (延续 24.10 体系)"
+        run: |
+          # 物理隔离：确保脚本可执行并应用修复
+          chmod +x scripts/sl3000-patch.sh
+          ./scripts/sl3000-patch.sh
 
-    - name: Physical Fix U-Boot Makefile
-      run: |
-        cd openwrt
-        # 延续物理修复：解决 sed 语法报错断点
-        UBOOT_MK="package/boot/uboot-mediatek/Makefile"
-        if [ -f "$UBOOT_MK" ]; then
-          sed -i '/dtb- +=/ s/$/ mt7981-sl3000-emmc.dtb/' $UBOOT_MK
-        fi
+      - name: "🔨 步骤5：工具链构建"
+        working-directory: ./openwrt
+        run: |
+          make defconfig
+          make tools/install -j$(nproc) || make tools/install -j1 V=s
+          make toolchain/install -j$(nproc) || make toolchain/install -j1 V=s
 
-    - name: Download package
-      id: package
-      run: |
-        cd openwrt
-        make defconfig
-        make download -j8
-        find dl -size -1024c -exec ls -l {} \;
-        find dl -size -1024c -exec rm -f {} \;
+      - name: "🔨 步骤6：引导程序编译"
+        working-directory: ./openwrt
+        run: |
+          make package/boot/arm-trusted-firmware-mediatek/clean
+          make package/boot/uboot-mediatek/clean
+          # 物理绝杀：2024.10 编译必须 V=s 确保错误可见
+          make package/boot/arm-trusted-firmware-mediatek/compile V=s -j1
+          make package/boot/uboot-mediatek/compile V=s -j1
+          make -j$(nproc) || make -j1 V=s
 
-    - name: Compile the firmware
-      id: compile
-      run: |
-        cd openwrt
-        echo -e "$(nproc) thread compile"
-        make -j$(nproc) || make -j1 || make -j1 V=s
-        echo "status=success" >> $GITHUB_OUTPUT
+      - name: "📦 步骤7：产物收割"
+        run: |
+          mkdir -p "dist"
+          find openwrt/bin/targets/mediatek/ -type f -name "*3000-emmc*sysupgrade.bin" -exec cp -v {} dist/SL3000-Firmware.bin \;
+          find openwrt/bin/targets/mediatek/ -type f -name "*bl2.img" -exec cp -v {} dist/ \;
+          find openwrt/bin/targets/mediatek/ -type f -name "*u-boot.bin" -exec cp -v {} dist/ \;
+          [ -f "openwrt/.config" ] && cp -v openwrt/.config dist/config.txt
 
-    - name: Check space usage
-      if: (!cancelled())
-      run: df -hT
-
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
-      if: steps.compile.outputs.status == 'success' && env.UPLOAD_FIRMWARE == 'true'
-      with:
-        name: ImmortalWrt_firmware
-        path: openwrt/bin/targets/
+      - name: "🚀 步骤8：发布产物"
+        uses: softprops/action-gh-release@v2
+        if: success()
+        with:
+          tag_name: SL3000-24.10-FIXED-${{ github.run_number }}
+          files: dist/*
+          body: |
+            SL3000 24.10 延续体系绝杀版
+            - 修正：所有注入逻辑改用 printf，物理剔除 EOF 风险。
+            - 保持：完全承袭 128MB 内核空间定义与 2024.10 工具链步骤。
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
