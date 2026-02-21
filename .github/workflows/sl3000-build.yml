@@ -22,7 +22,7 @@ jobs:
           sudo apt clean
           sudo rm -rf /var/lib/apt/lists/*
 
-      - name: "📦 步骤2：全依赖物理绝杀"
+      - name: "📦 步骤2：全依赖物理绝杀 (含 CMake 3.31 升级)"
         run: |
           sudo apt update
           sudo apt install -y build-essential clang flex bison gawk gettext \
@@ -30,6 +30,12 @@ jobs:
             device-tree-compiler wget curl tar pkg-config cmake \
             libgnutls28-dev uuid-dev libelf-dev bc
           
+          # 🔥 物理升级 CMake：彻底解决 rpcd-mod-luci 版本要求
+          wget -q https://github.com/Kitware/CMake/releases/download/v3.31.5/cmake-3.31.5-linux-x86_64.sh
+          sudo sh cmake-3.31.5-linux-x86_64.sh --skip-license --prefix=/usr/local
+          sudo ln -sf /usr/local/bin/cmake /usr/bin/cmake
+          cmake --version
+
           sudo swapoff /swapfile || true
           if [ ! -f /swapfile ]; then
             sudo fallocate -l 16G /swapfile
@@ -75,11 +81,11 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: success()
         with:
-          tag_name: SL3000-24.10-Isolated-${{ github.run_number }}
+          tag_name: SL3000-24.10-FullFix-${{ github.run_number }}
           files: dist/*
           body: |
-            SL3000 24.10 物理隔离修复版成功
-            - 策略：DTS 文件已预先压入 package/boot/uboot-mediatek/files/
-            - 物理修复：Makefile 编译时直接从本地 files 目录读取，彻底解决路径逃逸报错
+            SL3000 24.10 环境+源码全修复版
+            - 环境：CMake 物理升级至 3.31.5 (解决 rpcd-mod-luci 报错)
+            - 源码：U-Boot 包内隔离补丁生效，DTS 路径完全锁定
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
