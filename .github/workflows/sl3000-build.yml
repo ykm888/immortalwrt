@@ -41,12 +41,12 @@ jobs:
       - name: "📂 步骤3：源码克隆 (锁定 24.10)"
         run: git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git openwrt
 
-      - name: "⚡ 步骤4：物理外科手术 (执行最高级补丁)"
+      - name: "⚡ 步骤4：物理外科手术 (执行物理隔离补丁)"
         run: |
           chmod +x scripts/sl3000-patch.sh
           ./scripts/sl3000-patch.sh
 
-      - name: "🔨 步骤5：工具链构建 (防掉线模式)"
+      - name: "🔨 步骤5：工具链构建"
         working-directory: ./openwrt
         run: |
           make defconfig
@@ -75,11 +75,11 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: success()
         with:
-          tag_name: SL3000-24.10-Final-Extreme-${{ github.run_number }}
+          tag_name: SL3000-24.10-Isolated-${{ github.run_number }}
           files: dist/*
           body: |
-            SL3000 24.10 最高级物理修复版
-            - 物理修复：改用 cat 重写 Makefile，杜绝 printf 转义报错。
-            - 策略：0x40000000 架构地址 + DTS Makefile 全注册。
+            SL3000 24.10 物理隔离修复版成功
+            - 策略：DTS 文件已预先压入 package/boot/uboot-mediatek/files/
+            - 物理修复：Makefile 编译时直接从本地 files 目录读取，彻底解决路径逃逸报错
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
