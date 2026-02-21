@@ -8,6 +8,13 @@ env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
   REPO_BRANCH: master
   CONFIG_FILE: .config
+  DIY_P1_SH: diy-part1.sh
+  DIY_P2_SH: diy-part2.sh
+  SSH_ACTIONS: false
+  UPLOAD_BIN_DIR: false
+  UPLOAD_FIRMWARE: true
+  UPLOAD_RELEASE: true
+  TZ: Asia/Shanghai
 
 jobs:
   build:
@@ -26,12 +33,16 @@ jobs:
         sudo -E apt-get -qq install $(curl -fsSL https://is.gd/depends_ubuntu_2204)
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
-        sudo alphabetctl set-timezone "Asia/Shanghai"
+        sudo timedatectl set-timezone "$TZ"
+        sudo mkdir -p /workdir
+        sudo chown $USER:$GROUPS /workdir
 
     - name: Clone source code
+      working-directory: /workdir
       run: |
+        df -hT $PWD
         git clone $REPO_URL -b $REPO_BRANCH openwrt
-        cd openwrt
+        ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
     - name: Update & Install feeds
       run: |
@@ -43,7 +54,7 @@ jobs:
       run: |
         [ -e $CONFIG_FILE ] && cp $CONFIG_FILE openwrt/.config
         cd openwrt
-        # 物理注入：改用 printf 规避 EOF
+        # 物理注入：不使用 EOF，通过 printf 延续原文定义
         TARGET_MK="target/linux/mediatek/image/filogic.mk"
         printf "\ndefine Device/sl3000-emmc\n" >> $TARGET_MK
         printf "  DEVICE_VENDOR := SL\n" >> $TARGET_MK
@@ -58,8 +69,7 @@ jobs:
         printf "  DEVICE_PACKAGES := kmod-mmc kmod-mtk-sd kmod-fs-f2fs f2fs-tools f2fsck \\\\\n" >> $TARGET_MK
         printf "                    parted lsblk blkid block-mount kmod-zram zram-swap \\\\\n" >> $TARGET_MK
         printf "                    luci-app-diskman uboot-envtools\n\n" >> $TARGET_MK
-        printf "  # 物理修复：移除导致 Missing Build 报错的 ARTIFACTS 段落\n" >> $TARGET_MK
-        printf "  # 镜像生成逻辑\n" >> $TARGET_MK
+        printf "  # 物理修复：移除导致 Missing Build 报错保持一致\n" >> $TARGET_MK
         printf "  IMAGES := sysupgrade.bin\n" >> $TARGET_MK
         printf "  IMAGE/sysupgrade.bin := append-kernel | pad-to 134217728 | append-rootfs | check-size | append-metadata\n" >> $TARGET_MK
         printf "endef\n" >> $TARGET_MK
@@ -68,13 +78,14 @@ jobs:
     - name: Physical Fix U-Boot Makefile
       run: |
         cd openwrt
-        # 物理修复：针对 sed unterminated s command 报错点，添加闭合斜杠并定位行尾
+        # 延续物理修复：解决 sed 语法报错断点
         UBOOT_MK="package/boot/uboot-mediatek/Makefile"
         if [ -f "$UBOOT_MK" ]; then
           sed -i '/dtb- +=/ s/$/ mt7981-sl3000-emmc.dtb/' $UBOOT_MK
         fi
 
     - name: Download package
+      id: package
       run: |
         cd openwrt
         make defconfig
@@ -83,12 +94,20 @@ jobs:
         find dl -size -1024c -exec rm -f {} \;
 
     - name: Compile the firmware
+      id: compile
       run: |
         cd openwrt
+        echo -e "$(nproc) thread compile"
         make -j$(nproc) || make -j1 || make -j1 V=s
+        echo "status=success" >> $GITHUB_OUTPUT
+
+    - name: Check space usage
+      if: (!cancelled())
+      run: df -hT
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
+      if: steps.compile.outputs.status == 'success' && env.UPLOAD_FIRMWARE == 'true'
       with:
         name: ImmortalWrt_firmware
         path: openwrt/bin/targets/
