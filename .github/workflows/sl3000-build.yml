@@ -21,7 +21,7 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /var/lib/docker /usr/local/share/powershell /usr/share/swift /usr/local/.ghcup /usr/lib/jvm || true
           sudo apt clean
 
-      - name: "📦 步骤2：工具物理升级 (CMake & Swap)"
+      - name: "📦 步骤2：CMake & Swap"
         run: |
           sudo apt update
           sudo apt install -y build-essential clang flex bison gawk gettext git libncurses5-dev libssl-dev python3-pyelftools rsync unzip swig device-tree-compiler wget curl tar pkg-config libgnutls28-dev uuid-dev libelf-dev bc
@@ -31,10 +31,10 @@ jobs:
           sudo swapoff /swapfile || true
           sudo fallocate -l 16G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
 
-      - name: "📂 步骤3：源码物理克隆"
+      - name: "📂 步骤3：源码克隆"
         run: git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git openwrt
 
-      - name: "⚡ 步骤4：彻底解决物理补丁 (执行终极修复)"
+      - name: "⚡ 步骤4：执行物理补丁 (移除 patches)"
         run: |
           chmod +x scripts/sl3000-patch.sh
           ./scripts/sl3000-patch.sh
@@ -46,18 +46,16 @@ jobs:
           make tools/install -j$(nproc) || make tools/install -j1 V=s
           make toolchain/install -j$(nproc) || make toolchain/install -j1 V=s
 
-      - name: "🔨 步骤6：引导程序彻底编译"
+      - name: "🔨 步骤6：引导程序编译"
         working-directory: ./openwrt
         run: |
-          # 物理清理编译环境，确保从零开始
           make package/boot/arm-trusted-firmware-mediatek/clean
           make package/boot/uboot-mediatek/clean
-          # 顺序编译
           make package/boot/arm-trusted-firmware-mediatek/compile V=s -j1
           make package/boot/uboot-mediatek/compile V=s -j1
           make -j$(nproc) || make -j1 V=s
 
-      - name: "📦 步骤7：产物物理收割"
+      - name: "📦 步骤7：产物收割"
         run: |
           mkdir -p "dist"
           find openwrt/bin/targets/mediatek/ -type f -name "*3000-emmc*sysupgrade.bin" -exec cp -v {} dist/SL3000-Firmware.bin \;
@@ -69,12 +67,11 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: success()
         with:
-          tag_name: SL3000-24.10-ULTIMATE-FIXED-${{ github.run_number }}
+          tag_name: SL3000-24.10-FIXED-${{ github.run_number }}
           files: dist/*
           body: |
-            SL3000 24.10 终极彻底修复版
-            - 策略：注入 PKG_HASH:=skip，彻底解决下载和校验报错。
-            - 策略：物理清理旧构建目录，确保 tar 解压路径干净。
-            - 环境：CMake 3.31.5, U-Boot 2024.10, ATF 2025.07。
+            SL3000 24.10 物理绝杀版
+            - 修正：sed 注入时的双重变量转义问题。
+            - 隔离：物理删除 package/boot 下的旧 patches 目录，确保 2024.10 源码不被错误污染。
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
