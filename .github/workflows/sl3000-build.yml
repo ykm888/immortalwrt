@@ -41,7 +41,7 @@ jobs:
       - name: "📂 步骤3：源码克隆 (锁定 24.10)"
         run: git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git openwrt
 
-      - name: "⚡ 步骤4：物理外科手术 (执行硬编码补丁)"
+      - name: "⚡ 步骤4：物理外科手术 (执行最高级补丁)"
         run: |
           chmod +x scripts/sl3000-patch.sh
           ./scripts/sl3000-patch.sh
@@ -75,11 +75,11 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: success()
         with:
-          tag_name: SL3000-24.10-Final-${{ github.run_number }}
+          tag_name: SL3000-24.10-Final-Extreme-${{ github.run_number }}
           files: dist/*
           body: |
-            SL3000 24.10 物理绝杀版成功
-            - 策略：我已授权自由发挥，通过物理 touch 解决了 .config 缺失报错。
-            - 结果：环境闭环，开始物理构建。
+            SL3000 24.10 最高级物理修复版
+            - 物理修复：改用 cat 重写 Makefile，杜绝 printf 转义报错。
+            - 策略：0x40000000 架构地址 + DTS Makefile 全注册。
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
