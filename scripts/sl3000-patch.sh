@@ -1,46 +1,79 @@
 #!/bin/bash
-# 延续所有物理修复设置：SL3000 专属补丁
-set -ex
+# 物理熔断：SL3000 24.10 架构头文件硬编码绝杀版 (物理修复：解决 .config 读取冲突)
+set -eo pipefail
 
-# 定位物理工作空间
-WORKDIR="${GITHUB_WORKSPACE}/openwrt"
+REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd)
+WORKDIR="${REPO_ROOT}/openwrt"
+SRC_DIR="${REPO_ROOT}/custom-config"
+
 cd "${WORKDIR}"
 
-# 1. 【物理手术】彻底抹除 Makefile 中的 MIPS 变体污染
-# 移除所有 BuildVariants 的追加和定义，防止 aarch64 编译器触发 -mabi=32 错误
-UBOOT_MAKEFILE="package/boot/uboot-mediatek/Makefile"
-if [ -f "$UBOOT_MAKEFILE" ]; then
-    sed -i '/BuildVariants [+: ]=/d' "$UBOOT_MAKEFILE"
-    # 强制注入唯一 ARM64 变体定义
-    sed -i '/include $(INCLUDE_DIR)\/package.mk/i BuildVariants := mt7981_sl3000-emmc' "$UBOOT_MAKEFILE"
-    echo "Physical fix: U-Boot variants locked to mt7981_sl3000-emmc"
+# 1. [源头封锁]
+rm -rf feeds.conf
+printf 'src-git packages https://github.com/immortalwrt/packages.git\n' > feeds.conf.default
+printf 'src-git luci https://github.com/immortalwrt/luci.git\n' >> feeds.conf.default
+
+# 2. [物理对齐]
+rm -rf feeds/
+./scripts/feeds update -a
+./scripts/feeds install -a -f
+
+# 3. [物理源码锁定]
+mkdir -p dl
+curl -L --connect-timeout 20 --retry 5 "https://github.com/u-boot/u-boot/archive/refs/tags/v2024.10.tar.gz" -o "dl/u-boot-2024.10.tar.gz"
+
+# 4. 🔥 [物理绝杀：硬编码架构头文件]
+UB_MK="package/boot/uboot-mediatek/Makefile"
+rm -rf package/boot/uboot-mediatek/patches
+mkdir -p package/boot/uboot-mediatek
+
+printf 'include $(TOPDIR)/rules.mk\ninclude $(INCLUDE_DIR)/kernel.mk\n' > "$UB_MK"
+printf 'PKG_NAME:=uboot-mediatek\nPKG_VERSION:=2024.10\nPKG_RELEASE:=1\n' >> "$UB_MK"
+printf 'PKG_SOURCE:=u-boot-$(PKG_VERSION).tar.gz\n' >> "$UB_MK"
+printf 'PKG_BUILD_DIR:=$(BUILD_DIR)/u-boot-$(PKG_VERSION)\n' >> "$UB_MK"
+printf 'include $(INCLUDE_DIR)/package.mk\n' >> "$UB_MK"
+printf 'define Package/uboot-mediatek-mt7981-sl3000-emmc\n  SECTION:=boot\n  CATEGORY:=Boot Loader\n  TITLE:=U-Boot for SL3000\n  DEPENDS:=@TARGET_mediatek\nendef\n' >> "$UB_MK"
+
+printf 'define Build/Prepare\n\t$(Build/Prepare/Default)\n' >> "$UB_MK"
+# 物理硬核修复：直接修改 include/configs/mt7981.h，无视 Kconfig 传参
+printf '\techo "#define CFG_SYS_INIT_RAM_ADDR 0x40000000" >> $(PKG_BUILD_DIR)/include/configs/mt7981.h\n' >> "$UB_MK"
+printf '\techo "#define CFG_SYS_INIT_RAM_SIZE 0x00040000" >> $(PKG_BUILD_DIR)/include/configs/mt7981.h\n' >> "$UB_MK"
+printf '\techo "#define CFG_SYS_INIT_SP_ADDR (CFG_SYS_INIT_RAM_ADDR + CFG_SYS_INIT_RAM_SIZE - 0x10)" >> $(PKG_BUILD_DIR)/include/configs/mt7981.h\n' >> "$UB_MK"
+# 物理覆盖模板
+printf '\tcp $(PKG_BUILD_DIR)/configs/mt7981_emmc_rfb_defconfig $(PKG_BUILD_DIR)/configs/mt7981_sl3000_emmc_defconfig\n' >> "$UB_MK"
+printf '\tsed -i "s/DEFAULT_DEVICE_TREE=.*/DEFAULT_DEVICE_TREE=\\"mt7981-sl3000-emmc\\"/" $(PKG_BUILD_DIR)/configs/mt7981_sl3000_emmc_defconfig\n' >> "$UB_MK"
+printf '\techo "CONFIG_TEXT_BASE=0x41e00000" >> $(PKG_BUILD_DIR)/configs/mt7981_sl3000_emmc_defconfig\n' >> "$UB_MK"
+printf 'endef\n' >> "$UB_MK"
+
+printf 'define Build/Compile\n\t$(MAKE) -C $(PKG_BUILD_DIR) mt7981_sl3000_emmc_defconfig\n\t$(MAKE) -C $(PKG_BUILD_DIR) olddefconfig\n\t$(MAKE) -C $(PKG_BUILD_DIR) CROSS_COMPILE=$(TARGET_CROSS) DEVICE_DTS=mt7981-sl3000-emmc\nendef\n' >> "$UB_MK"
+printf 'define Package/uboot-mediatek-mt7981-sl3000-emmc/install\n\t$(INSTALL_DIR) $(1)\n\t$(CP) $(PKG_BUILD_DIR)/u-boot.bin $(1)/u-boot-sl3000.bin\nendef\n' >> "$UB_MK"
+printf '$(eval $(call BuildPackage,uboot-mediatek-mt7981-sl3000-emmc))\n' >> "$UB_MK"
+
+# 5. [配置锁定]
+# 修复项：物理确保 .config 存在后再处理配置
+touch .config
+if [ -f "${SRC_DIR}/sl3000.config" ]; then
+    cp -fv "${SRC_DIR}/sl3000.config" .config
+else
+    cat <<EOF > .config
+CONFIG_TARGET_mediatek=y
+CONFIG_TARGET_mediatek_filogic=y
+CONFIG_TARGET_mediatek_filogic_DEVICE_3000-emmc=y
+CONFIG_PACKAGE_uboot-mediatek-mt7981-sl3000-emmc=y
+CONFIG_PACKAGE_luci=y
+CONFIG_PACKAGE_luci-theme-bootstrap=y
+CONFIG_PACKAGE_luci-i18n-base-zh-cn=y
+EOF
 fi
 
-# 2. 【DTS 物理覆盖】
-# 假设 custom-config 目录下已有对应文件，执行物理替换
-CONF_SRC="${GITHUB_WORKSPACE}/custom-config"
-DTS_DIR="target/linux/mediatek/files-6.6/arch/arm64/boot/dts/mediatek/mediatek"
-mkdir -p "$DTS_DIR"
-if [ -f "${CONF_SRC}/mt7981b-3000-emmc.dts" ]; then
-    cp -fv "${CONF_SRC}/mt7981b-3000-emmc.dts" "$DTS_DIR/"
+# 6. [DTS 物理对齐]
+find target/linux/mediatek/ -name "files-*" -type d | while read -r dir; do
+    DTS_PATH="$dir/arch/arm64/boot/dts/mediatek"
+    mkdir -p "$DTS_PATH"
+    [ -f "${SRC_DIR}/mt7981b-3000-emmc.dts" ] && cp -v "${SRC_DIR}/mt7981b-3000-emmc.dts" "$DTS_PATH/"
+done
+
+# 7. [filogic.mk 物理补丁]
+if [ -f "${SRC_DIR}/filogic.mk" ]; then
+    cat "${SRC_DIR}/filogic.mk" >> target/linux/mediatek/image/filogic.mk
 fi
-
-# 3. 【Makefile 物理追加】
-# 修正 filogic.mk 以支持 sl3000-emmc 设备定义
-if [ -f "${CONF_SRC}/filogic.mk" ]; then
-    sed -i '/define Device\/sl3000-emmc/,/endef/d' target/linux/mediatek/image/filogic.mk || true
-    cat "${CONF_SRC}/filogic.mk" >> target/linux/mediatek/image/filogic.mk
-fi
-
-# 4. 【.config 物理死锁】
-# 强制清理冲突项并锁定目标配置
-sed -i 's/CONFIG_PACKAGE_uboot-mediatek-.*=y/# CONFIG_PACKAGE_uboot-mediatek- is not set/g' .config
-{
-    echo "CONFIG_TARGET_mediatek=y"
-    echo "CONFIG_TARGET_mediatek_filogic=y"
-    echo "CONFIG_TARGET_mediatek_filogic_DEVICE_sl3000-emmc=y"
-    echo "CONFIG_PACKAGE_uboot-mediatek-mt7981_sl3000-emmc=y"
-    echo "CONFIG_MAKE_FIP_BIN=y"
-} >> .config
-
-echo "物理设置已成功延续并锁定。"
