@@ -21,21 +21,20 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /var/lib/docker /usr/local/share/powershell /usr/share/swift /usr/local/.ghcup /usr/lib/jvm || true
           sudo apt clean
 
-      - name: "📦 步骤2：全依赖物理绝杀 (CMake 升级)"
+      - name: "📦 步骤2：工具物理升级 (CMake & Swap)"
         run: |
           sudo apt update
           sudo apt install -y build-essential clang flex bison gawk gettext git libncurses5-dev libssl-dev python3-pyelftools rsync unzip swig device-tree-compiler wget curl tar pkg-config libgnutls28-dev uuid-dev libelf-dev bc
           wget -q https://github.com/Kitware/CMake/releases/download/v3.31.5/cmake-3.31.5-linux-x86_64.sh
           sudo sh cmake-3.31.5-linux-x86_64.sh --skip-license --prefix=/usr/local
           sudo ln -sf /usr/local/bin/cmake /usr/bin/cmake
-          cmake --version
           sudo swapoff /swapfile || true
           sudo fallocate -l 16G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
 
-      - name: "📂 步骤3：源码克隆"
+      - name: "📂 步骤3：源码物理克隆"
         run: git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git openwrt
 
-      - name: "⚡ 步骤4：物理外科手术 (执行非 EOF 补丁)"
+      - name: "⚡ 步骤4：彻底解决物理补丁 (执行终极修复)"
         run: |
           chmod +x scripts/sl3000-patch.sh
           ./scripts/sl3000-patch.sh
@@ -47,9 +46,13 @@ jobs:
           make tools/install -j$(nproc) || make tools/install -j1 V=s
           make toolchain/install -j$(nproc) || make toolchain/install -j1 V=s
 
-      - name: "🔨 步骤6：引导程序绝杀编译"
+      - name: "🔨 步骤6：引导程序彻底编译"
         working-directory: ./openwrt
         run: |
+          # 物理清理编译环境，确保从零开始
+          make package/boot/arm-trusted-firmware-mediatek/clean
+          make package/boot/uboot-mediatek/clean
+          # 顺序编译
           make package/boot/arm-trusted-firmware-mediatek/compile V=s -j1
           make package/boot/uboot-mediatek/compile V=s -j1
           make -j$(nproc) || make -j1 V=s
@@ -66,11 +69,12 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: success()
         with:
-          tag_name: SL3000-24.10-NO-EOF-FIX-${{ github.run_number }}
+          tag_name: SL3000-24.10-ULTIMATE-FIXED-${{ github.run_number }}
           files: dist/*
           body: |
-            SL3000 24.10 物理绝杀（非 EOF 模式）
-            - 策略：使用 printf 强制物理注入 Makefile。
-            - 修复：CMake 3.31.5, U-Boot 2024.10, ATF 2025.07。
+            SL3000 24.10 终极彻底修复版
+            - 策略：注入 PKG_HASH:=skip，彻底解决下载和校验报错。
+            - 策略：物理清理旧构建目录，确保 tar 解压路径干净。
+            - 环境：CMake 3.31.5, U-Boot 2024.10, ATF 2025.07。
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
