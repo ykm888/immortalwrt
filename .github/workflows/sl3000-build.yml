@@ -36,7 +36,6 @@ jobs:
 
       - name: "⚡ 步骤4：执行物理补丁 (延续 24.10 体系)"
         run: |
-          # 物理隔离：确保脚本可执行并应用修复
           chmod +x scripts/sl3000-patch.sh
           ./scripts/sl3000-patch.sh
 
@@ -52,7 +51,6 @@ jobs:
         run: |
           make package/boot/arm-trusted-firmware-mediatek/clean
           make package/boot/uboot-mediatek/clean
-          # 物理绝杀：2024.10 编译必须 V=s 确保错误可见
           make package/boot/arm-trusted-firmware-mediatek/compile V=s -j1
           make package/boot/uboot-mediatek/compile V=s -j1
           make -j$(nproc) || make -j1 V=s
@@ -73,7 +71,7 @@ jobs:
           files: dist/*
           body: |
             SL3000 24.10 延续体系绝杀版
-            - 修正：所有注入逻辑改用 printf，物理剔除 EOF 风险。
-            - 保持：完全承袭 128MB 内核空间定义与 2024.10 工具链步骤。
+            - 修正：物理装载 U-Boot 2024.10 源码包并加入审计逻辑。
+            - 保持：128MB 内核死锁与 24.10 构建体系。
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
