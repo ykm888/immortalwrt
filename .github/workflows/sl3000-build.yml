@@ -34,7 +34,7 @@ jobs:
       - name: "📂 步骤3：源码克隆"
         run: git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git openwrt
 
-      - name: "⚡ 步骤4：执行物理补丁 (全内联彻底修复)"
+      - name: "⚡ 步骤4：执行物理补丁 (sed 转义绝杀修复)"
         run: |
           chmod +x scripts/sl3000-patch.sh
           ./scripts/sl3000-patch.sh
@@ -71,7 +71,7 @@ jobs:
           files: dist/*
           body: |
             SL3000 24.10 物理绝杀修复版
-            - 物理内联 DTS 内容，彻底解决文件丢失报错。
-            - 强制下载 U-Boot 2024.10 源码包。
+            - 物理修复：sed 定界符导致 unterminated s command。
+            - 物理内联：DTS 内容现场制造，彻底解决 No such file or directory。
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
