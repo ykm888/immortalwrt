@@ -34,7 +34,7 @@ jobs:
       - name: "📂 步骤3：源码克隆"
         run: git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git openwrt
 
-      - name: "⚡ 步骤4：执行物理补丁 (延续 24.10 体系)"
+      - name: "⚡ 步骤4：执行物理补丁 (全内联彻底修复)"
         run: |
           chmod +x scripts/sl3000-patch.sh
           ./scripts/sl3000-patch.sh
@@ -70,8 +70,8 @@ jobs:
           tag_name: SL3000-24.10-FIXED-${{ github.run_number }}
           files: dist/*
           body: |
-            SL3000 24.10 延续体系绝杀版
-            - 修正：物理装载 U-Boot 2024.10 源码包并加入审计逻辑。
-            - 保持：128MB 内核死锁与 24.10 构建体系。
+            SL3000 24.10 物理绝杀修复版
+            - 物理内联 DTS 内容，彻底解决文件丢失报错。
+            - 强制下载 U-Boot 2024.10 源码包。
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
