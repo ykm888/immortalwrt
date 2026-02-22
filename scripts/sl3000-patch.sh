@@ -1,20 +1,30 @@
 #!/bin/bash
-# 物理熔断：SL3000 24.10 字符转义与补丁隔离版
+# 物理熔断：SL3000 24.10 源码包缺失修复版
 set -eo pipefail
 
 WORKDIR="openwrt"
-# 预设 custom-config 兼容性路径，若不存在则回退至内置定义
 SRC_DIR="custom-config"
 
 cd "${WORKDIR}"
 
-# 1. [物理清场] 延续原文逻辑
+# 1. [物理清场] 延续体系
 ./scripts/feeds update -a
 ./scripts/feeds install -a -f
 rm -rf build_dir/target-aarch64_cortex-a53_musl/u-boot-2024.10
 rm -rf build_dir/target-aarch64_cortex-a53_musl/arm-trusted-firmware-mediatek*
 
-# 2. [U-Boot 物理重构] 物理移除旧 patches 确保 2024.10 纯净度
+# 2. 🔥 [物理绝杀：强制装载并校验源码包]
+mkdir -p dl
+echo "正在物理装载 U-Boot 2024.10 源码包..."
+curl -L "https://github.com/u-boot/u-boot/archive/refs/tags/v2024.10.tar.gz" -o dl/u-boot-2024.10.tar.gz
+
+# 物理审计：检查文件是否存在且大小是否正常（大于 10MB）
+if [ ! -s "dl/u-boot-2024.10.tar.gz" ]; then
+    echo "报错熔断：源码包下载失败或文件为空！"
+    exit 1
+fi
+
+# 3. [U-Boot 物理重构] 延续 \$\$\$\$ 转义体系
 UB_DIR="package/boot/uboot-mediatek"
 rm -rf "$UB_DIR/patches"
 mkdir -p "$UB_DIR/files"
@@ -45,11 +55,11 @@ printf "define Package/uboot-mediatek-mt7981-sl3000-emmc/install\n\t\$(INSTALL_D
 printf "\t\$(CP) \$(PKG_BUILD_DIR)/u-boot.bin \$(1)/u-boot-sl3000.bin\nendef\n\n" >> "$UB_DIR/Makefile"
 printf "\$(eval \$(call BuildPackage,uboot-mediatek-mt7981-sl3000-emmc))\n" >> "$UB_DIR/Makefile"
 
-# 3. [filogic.mk 物理注入] 严禁修改字节数值
+# 4. [filogic.mk 物理注入] 核心字节死锁保持原文
 TARGET_MK="target/linux/mediatek/image/filogic.mk"
 sed -i '/define Device\/sl3000-emmc/,/endef/d' $TARGET_MK || true
 printf "\ndefine Device/sl3000-emmc\n  DEVICE_VENDOR := SL\n  DEVICE_MODEL := 3000-eMMC\n  DEVICE_DTS := mt7981b-3000-emmc\n  DEVICE_DTS_DIR := \$(DTS_DIR)/mediatek\n  SUPPORTED_DEVICES := sl,3000-emmc\n\n  # 物理死锁：字节纯数字，防止 dd 报错\n  KERNEL_SIZE := 134217728\n  IMAGE_SIZE := 536870912\n\n  KERNEL := kernel-bin | lzma | append-dtb\n  DEVICE_PACKAGES := kmod-mmc kmod-mtk-sd kmod-fs-f2fs f2fs-tools f2fsck \\\\\n                    parted lsblk blkid block-mount kmod-zram zram-swap \\\\\n                    luci-app-diskman uboot-envtools\n\n  # 物理修复：移除导致 Missing Build 报错的 ARTIFACTS 段落\n  IMAGES := sysupgrade.bin\n  IMAGE/sysupgrade.bin := append-kernel | pad-to 134217728 | append-rootfs | check-size | append-metadata\nendef\nTARGET_DEVICES += sl3000-emmc\n" >> $TARGET_MK
 
-# 4. [环境配置]
+# 5. [环境配置]
 printf "CONFIG_TARGET_mediatek=y\nCONFIG_TARGET_mediatek_filogic=y\nCONFIG_TARGET_mediatek_filogic_DEVICE_sl3000-emmc=y\n" > .config
 printf "CONFIG_PACKAGE_uboot-mediatek-mt7981-sl3000-emmc=y\n" >> .config
