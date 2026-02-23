@@ -1,110 +1,87 @@
+// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
 /dts-v1/;
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/leds/common.h>
 #include "mt7981.dtsi"
 
 / {
+	model = "SL-3000 1GB-RAM 128GB-eMMC Custom";
 	compatible = "sl,3000-emmc", "mediatek,mt7981";
-	model = "SL-3000 eMMC";
 
-	memory@40000000 {
-		device_type = "memory";
-		reg = <0x00 0x40000000 0x00 0x40000000>;
+	aliases {
+		serial0 = &uart0;
+		led-boot = &status_red_led;
+		led-failsafe = &status_red_led;
+		led-running = &status_green_led;
+		led-upgrade = &status_blue_led;
 	};
 
 	chosen {
-		bootargs = "console=ttyS0,115200n1 loglevel=8 root=PARTLABEL=rootfs rootwait rootfstype=squashfs,f2fs";
+		bootargs = "root=PARTLABEL=rootfs rootwait";
+		stdout-path = "serial0:115200n8";
 	};
 
-	/* 物理补丁：补全缺失的电压调节器定义，消除 reg_1p8v 报错 */
-	reg_1p8v: regulator-1p8v {
-		compatible = "regulator-fixed";
-		regulator-name = "reg_1p8v";
-		regulator-min-microvolt = <1800000>;
-		regulator-max-microvolt = <1800000>;
-		always-on;
+	memory@40000000 {
+		/* 物理升级：修正为 1GB 内存 (0x40000000) */
+		reg = <0 0x40000000 0 0x40000000>;
 	};
 
-	reg_3p3v: regulator-3p3v {
-		compatible = "regulator-fixed";
-		regulator-name = "reg_3p3v";
-		regulator-min-microvolt = <3300000>;
-		regulator-max-microvolt = <3300000>;
-		always-on;
+	/* 以下 GPIO、LED、网络配置完全延续你的成功案例原文，结构死锁 */
+	gpio-keys {
+		compatible = "gpio-keys";
+		button-mesh { label = "mesh"; linux,code = <BTN_9>; linux,input-type = <EV_SW>; gpios = <&pio 0 GPIO_ACTIVE_LOW>; };
+		button-reset { label = "reset"; linux,code = <KEY_RESTART>; gpios = <&pio 1 GPIO_ACTIVE_LOW>; };
+	};
+
+	gpio-leds {
+		compatible = "gpio-leds";
+		status_red_led: led-0 { label = "red:status"; gpios = <&pio 10 GPIO_ACTIVE_LOW>; };
+		status_green_led: led-1 { label = "green:status"; gpios = <&pio 11 GPIO_ACTIVE_LOW>; };
+		status_blue_led: led-2 { label = "blue:status"; gpios = <&pio 12 GPIO_ACTIVE_LOW>; };
 	};
 };
 
-/* 物理修复：Pinctrl 节点补全 */
-&pio {
-	mmc0_pins_default: mmc0-pins-default {
-		mux {
-			function = "flash";
-			groups = "emmc_45";
-		};
-		conf {
-			groups = "emmc_45";
-			drive-strength = <MTK_DRIVE_8mA>;
-			bias-pull-up = <MTK_PUPD_SET_R1R0_01>;
-		};
+&eth {
+	status = "okay";
+	gmac0: mac@0 { compatible = "mediatek,eth-mac"; reg = <0>; phy-mode = "2500base-x";
+		fixed-link { speed = <2500>; full-duplex; pause; };
 	};
-
-	mmc0_pins_uhs: mmc0-pins-uhs {
-		mux {
-			function = "flash";
-			groups = "emmc_45";
-		};
-		conf {
-			groups = "emmc_45";
-			drive-strength = <MTK_DRIVE_10mA>;
-			bias-pull-up = <MTK_PUPD_SET_R1R0_01>;
+	mdio: mdio-bus {
+		#address-cells = <1>; #size-cells = <0>;
+		switch@0 {
+			compatible = "mediatek,mt7531"; reg = <31>; reset-gpios = <&pio 39 0>;
+			ports {
+				#address-cells = <1>; #size-cells = <0>;
+				port@0 { reg = <0>; label = "lan1"; };
+				port@1 { reg = <1>; label = "lan2"; };
+				port@2 { reg = <2>; label = "lan3"; };
+				port@3 { reg = <3>; label = "wan"; };
+				port@6 { reg = <6>; label = "cpu"; ethernet = <&gmac0>; phy-mode = "2500base-x";
+					fixed-link { speed = <2500>; full-duplex; pause; };
+				};
+			};
 		};
 	};
 };
 
 &mmc0 {
-	status = "okay";
-	bus-width = <8>;
-	cap-mmc-highspeed;
-	cap-mmc-hw-reset;
-	max-frequency = <52000000>;
-	non-removable;
+	bus-width = <8>; cap-mmc-highspeed; max-frequency = <52000000>;
+	no-sd; no-sdio; non-removable;
 	pinctrl-names = "default", "state_uhs";
-	pinctrl-0 = <&mmc0_pins_default>;
-	pinctrl-1 = <&mmc0_pins_uhs>;
-	vmmc-supply = <&reg_3p3v>;
-	vqmmc-supply = <&reg_1p8v>;
-
-	/* 物理锁定：符合 6.6 内核规范的分区表 */
-	partitions {
-		compatible = "fixed-partitions";
-		#address-cells = <1>;
-		#size-cells = <1>;
-
-		partition@0 {
-			label = "gpt";
-			reg = <0x0 0x100000>;
-			read-only;
-		};
-
-		partition@100000 {
-			label = "u-boot-env";
-			reg = <0x100000 0x80000>;
-		};
-
-		partition@180000 {
-			label = "factory";
-			reg = <0x180000 0x200000>;
-			read-only;
-		};
-
-		/* 物理同步：SL3000 专用内核分区 (128MB) */
-		partition@380000 {
-			label = "kernel";
-			reg = <0x380000 0x8000000>;
-		};
-
-		/* 物理同步：Rootfs 分区 */
-		partition@8380000 {
-			label = "rootfs";
-			reg = <0x8380000 0x30000000>;
-		};
-	};
+	pinctrl-0 = <&mmc0_pins_default>; pinctrl-1 = <&mmc0_pins_uhs>;
+	vmmc-supply = <&reg_3p3v>; status = "okay";
 };
+
+&pio {
+	mmc0_pins_default: mmc0-pins-default { mux { function = "flash"; groups = "emmc_45"; }; };
+	mmc0_pins_uhs: mmc0-pins-uhs { mux { function = "flash"; groups = "emmc_45"; }; };
+};
+
+&uart0 { status = "okay"; };
+&watchdog { status = "okay"; };
+&wifi { nvmem-cells = <&eeprom_factory_0>; nvmem-cell-names = "eeprom"; status = "okay";
+	band@1 { reg = <1>; nvmem-cells = <&macaddr_factory_4 1>; nvmem-cell-names = "mac-address"; };
+};
+&usb_phy { status = "okay"; };
+&xhci { status = "okay"; };
