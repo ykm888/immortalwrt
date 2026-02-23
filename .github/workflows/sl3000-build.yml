@@ -76,7 +76,7 @@ jobs:
       run: |
         cd openwrt
         echo -e "$(nproc) thread compile"
-        # 物理修复：针对 mt76 编译冲突，如果多线程失败，自动回退到单线程 V=s 模式
+        # 物理修复：mt76 报错熔断回退
         make -j$(nproc) || make -j1 V=s
         echo "status=success" >> $GITHUB_OUTPUT
 
@@ -85,10 +85,12 @@ jobs:
       if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
         cd openwrt/bin/targets/*/*
-        # 物理增强：捕获并强制重命名 U-Boot 和 BL2
-        find . -name "*u-boot*fip*" -exec cp -f {} immortalwrt-mediatek-mt7981-sl_3000-emmc-u-boot.fip \;
-        find . -name "*bl2*emmc*" -exec cp -f {} immortalwrt-mediatek-mt7981-sl_3000-emmc-bl2.img \;
-        rm -rf packages
+        # 物理重命名并捕获 U-Boot/BL2
+        find . -name "*u-boot*mt7981*" -exec cp -f {} immortalwrt-mediatek-mt7981-sl_3000-emmc-u-boot.fip \; 2>/dev/null || true
+        find . -name "*bl2*emmc*" -exec cp -f {} immortalwrt-mediatek-mt7981-sl_3000-emmc-bl2.img \; 2>/dev/null || true
+        echo "---- Artifacts Audit ----"
+        ls -F
+        rm -rf packages mt7988* mt7986*
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
 
