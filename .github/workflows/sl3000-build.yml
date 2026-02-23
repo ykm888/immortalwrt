@@ -1,4 +1,4 @@
-name: SL-3000-24.10-Build
+name: SL-3000-Verbatim-Build
 
 on:
   workflow_dispatch:
@@ -17,16 +17,16 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v4
 
-    - name: Prepare Environment
+    - name: Initialization Environment
       run: |
         sudo apt-get update
-        sudo apt-get install -y $(curl -fsSL https://raw.githubusercontent.com/p3terx/Actions-OpenWrt/main/debian-11-setup)
+        sudo apt-get install -y $(curl -fsSL https://raw.githubusercontent.com/p3terx/Actions-OpenWrt/main/debian-setup)
         sudo timedatectl set-timezone "$TZ"
 
     - name: Clone Source
       run: git clone --depth 1 $REPO_URL -b $REPO_BRANCH openwrt
 
-    - name: Physical Patch & Update Feeds
+    - name: Physical Patch Execution
       run: |
         cd openwrt
         cp ../$DIY_SH ./patch.sh
@@ -35,20 +35,20 @@ jobs:
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
-    - name: Load Config & Re-Patch
+    - name: Load Config & Force Sync
       run: |
         [ -f $CONFIG_FILE ] && cp $CONFIG_FILE openwrt/.config
         cd openwrt
-        ./patch.sh # 第二次运行确保覆盖 .config 里的错误项
+        ./patch.sh
         make defconfig
 
-    - name: Compile
+    - name: Compile Firmware
       run: |
         cd openwrt
         make -j$(nproc) || make -j1 V=s
 
-    - name: Upload Artifacts
+    - name: Upload Images
       uses: actions/upload-artifact@v4
       with:
-        name: SL3000-Firmware
+        name: SL3000-Verbatim-Firmware
         path: openwrt/bin/targets/mediatek/filogic/
