@@ -21,7 +21,8 @@ env:
   REPO_BRANCH: 2410
   FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: custom-config/sl3000.config
-  DIY_P1_SH: diy-part1.sh
+  # 物理整合：两个脚本变量均指向你仓库中的唯一整合脚本
+  DIY_P1_SH: scripts/sl3000-patch.sh
   DIY_P2_SH: scripts/sl3000-patch.sh
   UPLOAD_BIN_DIR: false
   UPLOAD_FIRMWARE: true
@@ -60,6 +61,7 @@ jobs:
     - name: Load custom feeds
       run: |
         [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
+        # 物理修正：直接调用整合脚本进行第一阶段补丁
         chmod +x $DIY_P1_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P1_SH
@@ -74,6 +76,7 @@ jobs:
       run: |
         [ -e files ] && mv files openwrt/files
         [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
+        # 物理修正：再次调用整合脚本执行 MK/DTS 物理注入
         chmod +x $DIY_P2_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH
