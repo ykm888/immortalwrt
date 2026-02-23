@@ -1,56 +1,42 @@
 #!/bin/bash
-#
-# https://github.com/P3TERX/Actions-OpenWrt
-# File name: diy-part1.sh
-# Description: OpenWrt DIY script part 1 (Before Update feeds)
-#
-# Copyright (c) 2019-2024 P3TERX <https://p3terx.com>
-#
+# File name: sl3000-patch.sh
+# Description: OpenWrt DIY script (Physical Fix for SL-3000 1GB)
 
-# Add a feed source (原文照抄)
+# -----------------------------------------------------------------------------
+# 物理修复 1：解决 Duplicate feed 'helloworld' 报错
+# -----------------------------------------------------------------------------
+sed -i '/helloworld/d' feeds.conf.default
 echo 'src-git helloworld https://github.com/fw876/helloworld' >>feeds.conf.default
 
 # -----------------------------------------------------------------------------
-# 物理修复：1GB RAM 适配与 Bootloader 生成强制补丁 (物理修复点)
+# 物理修复 2：硬件补丁注入 (路径对齐：小写 custom-config)
 # -----------------------------------------------------------------------------
 
-# 1. 物理注入 1GB 内存 DTS 定义
-# 物理路径物理适配：确保在不同源码目录下均能正确覆盖
-cp -f custom-config/mt7981b-3000-emmc.dts target/linux/mediatek/dts/ 2>/dev/null
-mkdir -p target/linux/mediatek/dts/mediatek/
-cp -f custom-config/mt7981b-3000-emmc.dts target/linux/mediatek/dts/mediatek/
+# 1. 物理注入 DTS (锁定 1GB RAM)
+if [ -f "$GITHUB_WORKSPACE/custom-config/mt7981b-3000-emmc.dts" ]; then
+    cp -f "$GITHUB_WORKSPACE/custom-config/mt7981b-3000-emmc.dts" target/linux/mediatek/dts/ 2>/dev/null
+    mkdir -p target/linux/mediatek/dts/mediatek/
+    cp -f "$GITHUB_WORKSPACE/custom-config/mt7981b-3000-emmc.dts" target/linux/mediatek/dts/mediatek/
+fi
 
-# 2. 物理覆盖 MK (只保留你的设备定义，原文框架)
-cp -f custom-config/filogic.mk target/linux/mediatek/image/filogic.mk
-
-# 3. 物理修正 .config：解决不生成 U-Boot/BL2 的物理缺失问题
-# 注意：该逻辑必须在读取自定义 config 后执行
-if [ -f ".config" ]; then
-    # 物理强制开启 U-Boot (FIP)
-    sed -i '/CONFIG_PACKAGE_u-boot-mt7981_sl_3000-emmc/d' .config
-    echo "CONFIG_PACKAGE_u-boot-mt7981_sl_3000-emmc=y" >> .config
-    
-    # 物理强制开启 BL2
-    sed -i '/CONFIG_PACKAGE_mt7981-bl2-emmc/d' .config
-    echo "CONFIG_PACKAGE_mt7981-bl2-emmc=y" >> .config
-    
-    # 物理锁定内核为 6.6 (若源码支持)
-    # sed -i '/CONFIG_LINUX_6_6/d' .config
-    # echo "CONFIG_LINUX_6_6=y" >> .config
+# 2. 物理覆盖 MK (彻底生成 U-Boot 的物理核心)
+if [ -f "$GITHUB_WORKSPACE/custom-config/filogic.mk" ]; then
+    cp -f "$GITHUB_WORKSPACE/custom-config/filogic.mk" target/linux/mediatek/image/filogic.mk
 fi
 
 # -----------------------------------------------------------------------------
+# 物理修复 3：强行补齐 U-Boot 编译开关 (解决 8000 行配置缺失问题)
+# -----------------------------------------------------------------------------
+if [ -f ".config" ]; then
+    # 物理清理冲突项并锁定开启
+    sed -i '/CONFIG_PACKAGE_u-boot-mt7981_sl_3000-emmc/d' .config
+    sed -i '/CONFIG_PACKAGE_mt7981-bl2-emmc/d' .config
+    echo "CONFIG_PACKAGE_u-boot-mt7981_sl_3000-emmc=y" >> .config
+    echo "CONFIG_PACKAGE_mt7981-bl2-emmc=y" >> .config
+fi
 
-#!/bin/bash
-#
-# https://github.com/P3TERX/Actions-OpenWrt
-# File name: diy-part2.sh
-# Description: OpenWrt DIY script part 2 (After Update feeds)
-#
-
-# Modify default IP (物理修复：锁定为 192.168.6.1)
+# -----------------------------------------------------------------------------
+# 物理修复 4：默认 IP 锁定为 192.168.6.1
+# -----------------------------------------------------------------------------
+[ -f package/base-files/files/bin/config_generate ] && \
 sed -i 's/192.168.1.1/192.168.6.1/g' package/base-files/files/bin/config_generate
-
-# 其他原文照抄（保持注释状态，严禁画蛇添足）
-#sed -i 's/luci-theme-bootstrap/luci-theme-argon/g' feeds/luci/collections/luci/Makefile
-#sed -i 's/OpenWrt/P3TERX-Router/g' package/base-files/files/bin/config_generate
