@@ -1,77 +1,54 @@
-name: SL3000_Ultimate_Step_Build_24.10
+name: SL-3000-24.10-Build
 
 on:
   workflow_dispatch:
 
 env:
-  FORCE_UNSAFE_CONFIGURE: 1
-  NON_INTERACTIVE: 1
+  REPO_URL: https://github.com/immortalwrt/immortalwrt
+  REPO_BRANCH: openwrt-24.10
+  CONFIG_FILE: custom-config/sl3000.config
+  DIY_SH: scripts/sl3000-patch.sh
   TZ: Asia/Shanghai
 
 jobs:
   build:
     runs-on: ubuntu-22.04
-    permissions:
-      contents: write
     steps:
-      - uses: actions/checkout@v4
+    - name: Checkout
+      uses: actions/checkout@v4
 
-      - name: "🚀 步骤1：磁盘优化"
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /var/lib/docker /usr/local/share/powershell /usr/share/swift /usr/local/.ghcup /usr/lib/jvm || true
-          sudo apt clean
+    - name: Prepare Environment
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y $(curl -fsSL https://raw.githubusercontent.com/p3terx/Actions-OpenWrt/main/debian-11-setup)
+        sudo timedatectl set-timezone "$TZ"
 
-      - name: "📦 步骤2：CMake & Swap"
-        run: |
-          sudo apt update
-          sudo apt install -y build-essential clang flex bison gawk gettext git libncurses5-dev libssl-dev python3-pyelftools rsync unzip swig device-tree-compiler wget curl tar pkg-config libgnutls28-dev uuid-dev libelf-dev bc
-          wget -q https://github.com/Kitware/CMake/releases/download/v3.31.5/cmake-3.31.5-linux-x86_64.sh
-          sudo sh cmake-3.31.5-linux-x86_64.sh --skip-license --prefix=/usr/local
-          sudo ln -sf /usr/local/bin/cmake /usr/bin/cmake
-          sudo swapoff /swapfile || true
-          sudo fallocate -l 16G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
+    - name: Clone Source
+      run: git clone --depth 1 $REPO_URL -b $REPO_BRANCH openwrt
 
-      - name: "📂 步骤3：源码克隆"
-        run: git clone --depth=1 -b openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git openwrt
+    - name: Physical Patch & Update Feeds
+      run: |
+        cd openwrt
+        cp ../$DIY_SH ./patch.sh
+        chmod +x patch.sh
+        ./patch.sh
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
 
-      - name: "⚡ 步骤4：执行物理补丁 (sed 转义绝杀修复)"
-        run: |
-          chmod +x scripts/sl3000-patch.sh
-          ./scripts/sl3000-patch.sh
+    - name: Load Config & Re-Patch
+      run: |
+        [ -f $CONFIG_FILE ] && cp $CONFIG_FILE openwrt/.config
+        cd openwrt
+        ./patch.sh # 第二次运行确保覆盖 .config 里的错误项
+        make defconfig
 
-      - name: "🔨 步骤5：工具链构建"
-        working-directory: ./openwrt
-        run: |
-          make defconfig
-          make tools/install -j$(nproc) || make tools/install -j1 V=s
-          make toolchain/install -j$(nproc) || make toolchain/install -j1 V=s
+    - name: Compile
+      run: |
+        cd openwrt
+        make -j$(nproc) || make -j1 V=s
 
-      - name: "🔨 步骤6：引导程序编译"
-        working-directory: ./openwrt
-        run: |
-          make package/boot/arm-trusted-firmware-mediatek/clean
-          make package/boot/uboot-mediatek/clean
-          make package/boot/arm-trusted-firmware-mediatek/compile V=s -j1
-          make package/boot/uboot-mediatek/compile V=s -j1
-          make -j$(nproc) || make -j1 V=s
-
-      - name: "📦 步骤7：产物收割"
-        run: |
-          mkdir -p "dist"
-          find openwrt/bin/targets/mediatek/ -type f -name "*3000-emmc*sysupgrade.bin" -exec cp -v {} dist/SL3000-Firmware.bin \;
-          find openwrt/bin/targets/mediatek/ -type f -name "*bl2.img" -exec cp -v {} dist/ \;
-          find openwrt/bin/targets/mediatek/ -type f -name "*u-boot.bin" -exec cp -v {} dist/ \;
-          [ -f "openwrt/.config" ] && cp -v openwrt/.config dist/config.txt
-
-      - name: "🚀 步骤8：发布产物"
-        uses: softprops/action-gh-release@v2
-        if: success()
-        with:
-          tag_name: SL3000-24.10-FIXED-${{ github.run_number }}
-          files: dist/*
-          body: |
-            SL3000 24.10 物理绝杀修复版
-            - 物理修复：sed 定界符导致 unterminated s command。
-            - 物理内联：DTS 内容现场制造，彻底解决 No such file or directory。
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: SL3000-Firmware
+        path: openwrt/bin/targets/mediatek/filogic/
