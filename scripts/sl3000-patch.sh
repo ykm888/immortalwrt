@@ -1,6 +1,5 @@
 #!/bin/bash
 # File name: sl3000-patch.sh
-# Description: OpenWrt DIY script (Physical Fix for SL-3000 1GB)
 
 # -----------------------------------------------------------------------------
 # 物理修复 1：解决 Duplicate feed 'helloworld' 报错
@@ -25,10 +24,9 @@ if [ -f "$GITHUB_WORKSPACE/custom-config/filogic.mk" ]; then
 fi
 
 # -----------------------------------------------------------------------------
-# 物理修复 3：强行补齐 U-Boot 编译开关 (解决 8000 行配置缺失问题)
+# 物理修复 3：强行补齐 U-Boot 编译开关 (针对 8000 行配置缺失项)
 # -----------------------------------------------------------------------------
 if [ -f ".config" ]; then
-    # 物理清理冲突项并锁定开启
     sed -i '/CONFIG_PACKAGE_u-boot-mt7981_sl_3000-emmc/d' .config
     sed -i '/CONFIG_PACKAGE_mt7981-bl2-emmc/d' .config
     echo "CONFIG_PACKAGE_u-boot-mt7981_sl_3000-emmc=y" >> .config
@@ -36,7 +34,12 @@ if [ -f ".config" ]; then
 fi
 
 # -----------------------------------------------------------------------------
-# 物理修复 4：默认 IP 锁定为 192.168.6.1
+# 物理修复 4：解决 mt76 编译冲突 (清理残余)
+# -----------------------------------------------------------------------------
+rm -rf package/kernel/mt76 package/kernel/mac80211
+
+# -----------------------------------------------------------------------------
+# 物理修复 5：默认 IP 锁定为 192.168.6.1
 # -----------------------------------------------------------------------------
 [ -f package/base-files/files/bin/config_generate ] && \
 sed -i 's/192.168.1.1/192.168.6.1/g' package/base-files/files/bin/config_generate
