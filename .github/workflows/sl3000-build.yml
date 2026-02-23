@@ -76,7 +76,8 @@ jobs:
       run: |
         cd openwrt
         echo -e "$(nproc) thread compile"
-        make -j$(nproc) || make -j1 || make -j1 V=s
+        # 物理修复：针对 mt76 编译冲突，如果多线程失败，自动回退到单线程 V=s 模式
+        make -j$(nproc) || make -j1 V=s
         echo "status=success" >> $GITHUB_OUTPUT
 
     - name: Organize files
