@@ -32,30 +32,32 @@ jobs:
         # 物理复制整合脚本
         cp ../$DIY_SH ./patch.sh
         chmod +x patch.sh
-        # [物理触发 1]：注入源、创建目录、注入 DTS/MK
+        # [物理触发 1]：完成 Feeds 注入与目录创建
         ./patch.sh 
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
-    - name: Load Config & Final Physical Audit
+    - name: Load Config & Pre-Build Audit
       run: |
-        # 物理加载自定义 .config
         [ -f $CONFIG_FILE ] && cp $CONFIG_FILE openwrt/.config
         cd openwrt
-        # [物理触发 2]：在生成最终配置前，再次运行脚本确保 DTS 文件和 .config 开关被锁定
+        # [关键修复]：物理移除旧的 bin 目录，防止缓存干扰 U-Boot 产物路径
+        rm -rf bin/
+        # [物理触发 2]：物理锁定内核版本与 U-Boot 编译包开关
         ./patch.sh
         make defconfig
 
     - name: Compile Firmware
       run: |
         cd openwrt
-        # 物理执行构建，增加物理检查，确保编译报错能立刻熔断
+        # 物理执行构建，开启详细日志输出以便熔断检查
         make -j$(nproc) || make -j1 V=s
 
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4
       with:
         name: SL3000-Firmware-Package
+        # 物理包含所有 bin 文件，确保 fip.bin 能够被正确收集
         path: |
           openwrt/bin/targets/mediatek/filogic/*.bin
           openwrt/bin/targets/mediatek/filogic/*.tar.gz
