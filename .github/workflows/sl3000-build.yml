@@ -79,7 +79,8 @@ jobs:
         set +e
         make -j$(nproc)
         if [ $? -ne 0 ]; then
-            echo "检测到编译冲突（可能是 mt76 依赖问题），执行物理清场并重试..."
+            echo "检测到编译冲突（mt76 依赖问题），执行物理清场并单线程重试..."
+            # 物理抹除 mt76 的错误编译记忆
             rm -rf build_dir/target-*/mt76-*
             rm -rf staging_dir/target-*/stamp/.package_kernel_mt76_compile
             make -j1 V=s
@@ -91,6 +92,7 @@ jobs:
       if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
         cd openwrt/bin/targets/*/*
+        # 模糊匹配捕获 U-Boot 和 BL2
         find . -name "*u-boot*mt7981*" -exec cp -f {} immortalwrt-mediatek-mt7981-sl_3000-emmc-u-boot.fip \; 2>/dev/null || true
         find . -name "*bl2*emmc*" -exec cp -f {} immortalwrt-mediatek-mt7981-sl_3000-emmc-bl2.img \; 2>/dev/null || true
         echo "---- Artifacts Audit ----"
