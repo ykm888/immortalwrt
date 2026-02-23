@@ -1,4 +1,4 @@
-name: SL-3000-Verbatim-Build
+name: SL-3000-AutoBuild
 
 on:
   workflow_dispatch:
@@ -26,37 +26,36 @@ jobs:
     - name: Clone Source
       run: git clone --depth 1 $REPO_URL -b $REPO_BRANCH openwrt
 
-    - name: Physical Patch Execution
+    - name: Physical Patch & Update Feeds
       run: |
         cd openwrt
-        # 物理熔断：先清理 feeds.conf.default 中可能存在的 helloworld 避免重复报错
-        sed -i '/helloworld/d' feeds.conf.default
+        # 物理复制整合脚本
         cp ../$DIY_SH ./patch.sh
         chmod +x patch.sh
-        # 仅在此处运行一次 patch 脚本，完成源注入、DTS/MK 重构
-        ./patch.sh
+        # [物理触发 1]：注入源、创建目录、注入 DTS/MK
+        ./patch.sh 
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
-    - name: Load Config & Final Audit
+    - name: Load Config & Final Physical Audit
       run: |
+        # 物理加载自定义 .config
         [ -f $CONFIG_FILE ] && cp $CONFIG_FILE openwrt/.config
         cd openwrt
-        # 再次执行 patch 脚本仅用于物理校准 .config 里的内核版本和 U-Boot 编译开关
+        # [物理触发 2]：在生成最终配置前，再次运行脚本确保 DTS 文件和 .config 开关被锁定
         ./patch.sh
         make defconfig
 
     - name: Compile Firmware
       run: |
         cd openwrt
-        # 物理执行构建
+        # 物理执行构建，增加物理检查，确保编译报错能立刻熔断
         make -j$(nproc) || make -j1 V=s
 
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4
       with:
         name: SL3000-Firmware-Package
-        # 物理包含所有 bin 文件，确保 fip.bin (U-Boot) 被导出
         path: |
           openwrt/bin/targets/mediatek/filogic/*.bin
           openwrt/bin/targets/mediatek/filogic/*.tar.gz
