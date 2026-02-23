@@ -1,62 +1,29 @@
 #!/bin/bash
-# 物理熔断：SL3000 24.10 物理修复版（严格执行原文照抄与符号转义）
+# 物理熔断：SL-3000 24.10 (Kernel 6.6) 物理整合修复脚本
+# 整合 Part1 (源处理) 与 Part2 (路径修复) 逻辑
 set -eo pipefail
 
-WORKDIR="openwrt"
-cd "${WORKDIR}"
+# 1. [Part 1 逻辑整合] 物理注入插件源 (原文照抄)
+echo 'src-git helloworld https://github.com/fw876/helloworld' >> feeds.conf.default
 
-# 1. [物理清场]
-./scripts/feeds update -a
-./scripts/feeds install -a -f
-rm -rf build_dir/target-aarch64_cortex-a53_musl/u-boot-2024.10
-rm -rf build_dir/target-aarch64_cortex-a53_musl/arm-trusted-firmware-mediatek*
+# 2. [Part 2 路径修复] 针对 24.10 架构进行物理对齐
+# 物理创建 Kernel 6.6 要求的子目录结构
+mkdir -p target/linux/mediatek/dts/mediatek
 
-# 2. [源码物理装载]
-mkdir -p dl
-curl -L "https://github.com/u-boot/u-boot/archive/refs/tags/v2024.10.tar.gz" -o dl/u-boot-2024.10.tar.gz
+# 3. [物理覆盖] 强制将仓库配置同步至源码树
+# 物理锁定成功案例中的文件名与路径
+if [ -f "custom-config/mt7981b-3000-emmc.dts" ]; then
+    cp -f custom-config/mt7981b-3000-emmc.dts target/linux/mediatek/dts/mediatek/mt7981b-sl-3000-emmc.dts
+fi
 
-# 3. [U-Boot 物理注入]
-UB_DIR="package/boot/uboot-mediatek"
-rm -rf "$UB_DIR/patches"
-mkdir -p "$UB_DIR/files"
+if [ -f "custom-config/filogic.mk" ]; then
+    cp -f custom-config/filogic.mk target/linux/mediatek/image/filogic.mk
+fi
 
-# 物理注入 U-Boot DTS
-printf "/dts-v1/;\n#include \"mt7981.dtsi\"\n/ {\n\tmodel = \"SL3000-eMMC\";\n\tcompatible = \"mediatek,mt7981-spim-snand-rfb\", \"mediatek,mt7981\";\n\taliases {\n\t\tmmc0 = &mmc0;\n\t};\n};\n&mmc0 {\n\tstatus = \"okay\";\n\tbus-width = <8>;\n\tmax-frequency = <52000000>;\n\tcap-mmc-highspeed;\n\tnon-removable;\n};\n" > "$UB_DIR/files/sl3000.dts"
+# 4. [物理补丁] 修复无线驱动包引用 (针对 24.10 成功案例逻辑同步)
+# 确保 filogic.mk 中的无线固件包符合新版仓库定义
+sed -i 's/mt7981-wo-firmware/kmod-mt7981-firmware/g' target/linux/mediatek/image/filogic.mk
 
-# 物理重构 Makefile (严格承袭原文结构，仅物理转义变量符)
-printf "include \$(TOPDIR)/rules.mk\n" > "$UB_DIR/Makefile"
-printf "include \$(INCLUDE_DIR)/kernel.mk\n" >> "$UB_DIR/Makefile"
-printf "PKG_NAME:=uboot-mediatek\nPKG_VERSION:=2024.10\nPKG_RELEASE:=1\n" >> "$UB_DIR/Makefile"
-printf "PKG_SOURCE:=u-boot-\$(PKG_VERSION).tar.gz\n" >> "$UB_DIR/Makefile"
-printf "PKG_HASH:=skip\n" >> "$UB_DIR/Makefile"
-printf "PKG_BUILD_DIR:=\$(BUILD_DIR)/u-boot-\$(PKG_VERSION)\n" >> "$UB_DIR/Makefile"
-printf "include \$(INCLUDE_DIR)/package.mk\n\n" >> "$UB_DIR/Makefile"
-printf "define Package/uboot-mediatek-mt7981-sl3000-emmc\n  SECTION:=boot\n  CATEGORY:=Boot Loader\n" >> "$UB_DIR/Makefile"
-printf "  TITLE:=U-Boot for SL3000 (Physical Fix)\n  DEPENDS:=@TARGET_mediatek\nendef\n\n" >> "$UB_DIR/Makefile"
-printf "define Build/Prepare\n\t\$(Build/Prepare/Default)\n" >> "$UB_DIR/Makefile"
-printf "\techo \"#define CFG_SYS_INIT_RAM_ADDR 0x40000000\" >> \$(PKG_BUILD_DIR)/include/configs/mt7981.h\n" >> "$UB_DIR/Makefile"
-printf "\techo \"#define CFG_SYS_INIT_RAM_SIZE 0x00040000\" >> \$(PKG_BUILD_DIR)/include/configs/mt7981.h\n" >> "$UB_DIR/Makefile"
-printf "\techo \"#define CFG_SYS_INIT_SP_ADDR (CFG_SYS_INIT_RAM_ADDR + CFG_SYS_INIT_RAM_SIZE - 0x10)\" >> \$(PKG_BUILD_DIR)/include/configs/mt7981.h\n" >> "$UB_DIR/Makefile"
-printf "\tcp ./files/sl3000.dts \$(PKG_BUILD_DIR)/arch/arm/dts/mt7981-sl3000-emmc.dts\n" >> "$UB_DIR/Makefile"
-printf "\tsed -i 's|dtb-\$\$(CONFIG_ARCH_MEDIATEK) +=|dtb-\$\$(CONFIG_ARCH_MEDIATEK) += mt7981-sl3000-emmc.dtb|' \$(PKG_BUILD_DIR)/arch/arm/dts/Makefile\n" >> "$UB_DIR/Makefile"
-printf "\tcp \$(PKG_BUILD_DIR)/configs/mt7981_emmc_rfb_defconfig \$(PKG_BUILD_DIR)/configs/mt7981_sl3000_emmc_defconfig\n" >> "$UB_DIR/Makefile"
-printf "\tsed -i 's/DEFAULT_DEVICE_TREE=.*/DEFAULT_DEVICE_TREE=\"mt7981-sl3000-emmc\"/' \$(PKG_BUILD_DIR)/configs/mt7981_sl3000_emmc_defconfig\n" >> "$UB_DIR/Makefile"
-printf "\techo \"CONFIG_TEXT_BASE=0x41e00000\" >> \$(PKG_BUILD_DIR)/configs/mt7981_sl3000_emmc_defconfig\nendef\n\n" >> "$UB_DIR/Makefile"
-printf "define Build/Compile\n\t\$(MAKE) -C \$(PKG_BUILD_DIR) mt7981_sl3000_emmc_defconfig\n" >> "$UB_DIR/Makefile"
-printf "\t\$(MAKE) -C \$(PKG_BUILD_DIR) CROSS_COMPILE=\$(TARGET_CROSS) DEVICE_DTS=mt7981-sl3000-emmc\nendef\n\n" >> "$UB_DIR/Makefile"
-printf "define Package/uboot-mediatek-mt7981-sl3000-emmc/install\n\t\$(INSTALL_DIR) \$(1)\n" >> "$UB_DIR/Makefile"
-printf "\t\$(CP) \$(PKG_BUILD_DIR)/u-boot.bin \$(1)/u-boot-sl3000.bin\nendef\n\n" >> "$UB_DIR/Makefile"
-printf "\$(eval \$(call BuildPackage,uboot-mediatek-mt7981-sl3000-emmc))\n" >> "$UB_DIR/Makefile"
-
-# 4. [内核 DTS 物理注入]
-mkdir -p target/linux/mediatek/dts/
-printf "/dts-v1/;\n#include \"mt7981.dtsi\"\n/ {\n\tmodel = \"SL3000-eMMC\";\n\tcompatible = \"mediatek,mt7981-spim-snand-rfb\", \"mediatek,mt7981\";\n};\n&mmc0 {\n\tstatus = \"okay\";\n\tbus-width = <8>;\n\tmax-frequency = <52000000>;\n\tcap-mmc-highspeed;\n\tnon-removable;\n};\n" > target/linux/mediatek/dts/mt7981b-3000-emmc.dts
-
-# 5. [filogic.mk 物理注入]
-TARGET_MK="target/linux/mediatek/image/filogic.mk"
-sed -i '/define Device\/sl3000-emmc/,/endef/d' $TARGET_MK || true
-printf "\ndefine Device/sl3000-emmc\n  DEVICE_VENDOR := SL\n  DEVICE_MODEL := 3000-eMMC\n  DEVICE_DTS := mt7981b-3000-emmc\n  DEVICE_DTS_DIR := \$(DTS_DIR)/mediatek\n  SUPPORTED_DEVICES := sl,3000-emmc\n\n  KERNEL_SIZE := 134217728\n  IMAGE_SIZE := 536870912\n\n  KERNEL := kernel-bin | lzma | append-dtb\n  DEVICE_PACKAGES := kmod-mmc kmod-mtk-sd kmod-fs-f2fs f2fs-tools f2fsck \\\\\n                    parted lsblk blkid block-mount kmod-zram zram-swap \\\\\n                    luci-app-diskman uboot-envtools\n\n  IMAGES := sysupgrade.bin\n  IMAGE/sysupgrade.bin := append-kernel | pad-to 134217728 | append-rootfs | check-size | append-metadata\nendef\nTARGET_DEVICES += sl3000-emmc\n" >> $TARGET_MK
-
-# 6. [环境注入]
-printf "CONFIG_TARGET_mediatek=y\nCONFIG_TARGET_mediatek_filogic=y\nCONFIG_TARGET_mediatek_filogic_DEVICE_sl3000-emmc=y\n" > .config
-printf "CONFIG_PACKAGE_uboot-mediatek-mt7981-sl3000-emmc=y\n" >> .config
+# 5. [物理清理] 移除官方多余配置，实现“结构死锁”
+# 确保只编译 SL-3000，防止其他设备定义干扰
+# (由于 filogic.mk 已被完整覆盖，此步骤已通过覆盖动作闭环)
