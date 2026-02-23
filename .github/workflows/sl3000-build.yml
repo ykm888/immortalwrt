@@ -29,26 +29,34 @@ jobs:
     - name: Physical Patch Execution
       run: |
         cd openwrt
+        # 物理熔断：先清理 feeds.conf.default 中可能存在的 helloworld 避免重复报错
+        sed -i '/helloworld/d' feeds.conf.default
         cp ../$DIY_SH ./patch.sh
         chmod +x patch.sh
+        # 仅在此处运行一次 patch 脚本，完成源注入、DTS/MK 重构
         ./patch.sh
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
-    - name: Load Config & Force Sync
+    - name: Load Config & Final Audit
       run: |
         [ -f $CONFIG_FILE ] && cp $CONFIG_FILE openwrt/.config
         cd openwrt
+        # 再次执行 patch 脚本仅用于物理校准 .config 里的内核版本和 U-Boot 编译开关
         ./patch.sh
         make defconfig
 
     - name: Compile Firmware
       run: |
         cd openwrt
+        # 物理执行构建
         make -j$(nproc) || make -j1 V=s
 
-    - name: Upload Images
+    - name: Upload Artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: SL3000-Verbatim-Firmware
-        path: openwrt/bin/targets/mediatek/filogic/
+        name: SL3000-Firmware-Package
+        # 物理包含所有 bin 文件，确保 fip.bin (U-Boot) 被导出
+        path: |
+          openwrt/bin/targets/mediatek/filogic/*.bin
+          openwrt/bin/targets/mediatek/filogic/*.tar.gz
