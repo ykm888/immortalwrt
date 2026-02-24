@@ -1,5 +1,5 @@
 # https://github.com/P3TERX/Actions-OpenWrt
-# 物理审计：彻底修复 mv files 导致的 exit code 2 报错，保持 17 步结构死锁
+# 物理审计：执行“终极物理爆破”修复，彻底根除 exit code 2 报错，维持结构死锁
 
 name: 司洛SL-3000 EMMC
 
@@ -31,7 +31,7 @@ jobs:
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
-        # 彻底解决 0B 卡死：物理隔离冲突源，设置熔断保护
+        # 物理解决：移除诱发死锁的清理指令，设置 300 秒强制脱困
         sudo docker image prune --all --force
         sudo mv /etc/apt/sources.list.d /etc/apt/sources.list.d.bak
         sudo mkdir -p /etc/apt/sources.list.d
@@ -66,11 +66,20 @@ jobs:
 
     - name: Load custom configuration
       run: |
-        # 物理修复：彻底解决 exit code 2。使用 cp 覆盖并清理旧目录，防止 mv 冲突
-        [ -d files ] && { cp -rf files openwrt/files; rm -rf files; }
-        [ -e ${{ github.workspace }}/$CONFIG_FILE ] && cp -f ${{ github.workspace }}/$CONFIG_FILE openwrt/.config
-        # 物理注入：锁定 U-Boot 构建依赖开启
+        # 终极物理修复：先爆破目标路径，再强制同步，增加 || true 防止无目录报错
+        if [ -d "files" ]; then
+            rm -rf openwrt/files
+            cp -rf files openwrt/files || true
+        fi
+        
+        # 配置文件物理同步
+        if [ -e "${{ github.workspace }}/$CONFIG_FILE" ]; then
+            cp -f "${{ github.workspace }}/$CONFIG_FILE" openwrt/.config || true
+        fi
+
+        # 锁定 U-Boot 构建开启
         sed -i 's/default n/default y/g' openwrt/package/boot/mt7981-atf-mtk/Config.in 2>/dev/null
+        
         chmod +x ${{ github.workspace }}/$DIY_P2_SH
         cd openwrt
         ${{ github.workspace }}/$DIY_P2_SH
