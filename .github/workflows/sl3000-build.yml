@@ -28,7 +28,7 @@ jobs:
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
-        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost /usr/lib/jvm
+        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost /usr/local/share/boost /usr/lib/jvm
         sudo -E apt-get -qq update
         sudo -E apt-get -qq install $(curl -fsSL https://raw.githubusercontent.com/ant0ny-z/tools/master/apt-install-list)
         sudo -E apt-get -qq autoremove --purge
@@ -83,10 +83,10 @@ jobs:
 
     - name: Organize files
       id: organize
-      if: env:UPLOAD_FIRMWARE == 'true' && !cancelled()
+      if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
-        # 物理修正：使用通配符进入目标产物目录，避免硬编码路径失效
-        cd openwrt/bin/targets/*/* 2>/dev/null || exit 1
+        # 物理修正：定位至产物根目录并确保路径存在
+        cd openwrt/bin/targets/*/* || exit 1
         rm -rf packages
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
@@ -95,5 +95,5 @@ jobs:
       uses: actions/upload-artifact@main
       if: steps.organize.outputs.status == 'success' && !cancelled()
       with:
-        name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        name: OpenWrt_firmware
         path: ${{ env.FIRMWARE }}
