@@ -77,12 +77,16 @@ jobs:
         cd openwrt
         echo -e "$(nproc) thread compile"
         set +e
+        # 核心策略：先执行多线程并行
         make -j$(nproc)
         if [ $? -ne 0 ]; then
-            echo "检测到编译冲突（mt76 依赖问题），执行物理清场并单线程重试..."
-            # 物理抹除 mt76 的错误编译记忆
-            rm -rf build_dir/target-*/mt76-*
-            rm -rf staging_dir/target-*/stamp/.package_kernel_mt76_compile
+            echo "检测到编译死锁，正在执行深度物理清场并回退单线程..."
+            # 物理清理 1：删除 mt76 所有中间产物和隐藏的配置戳（.configured_*）
+            rm -rf build_dir/target-*/linux-mediatek_filogic/mt76-*
+            # 物理清理 2：删除 staging_dir 中的安装状态戳，强迫重新检测依赖
+            rm -rf staging_dir/target-*/stamp/.package_kernel_mt76*
+            rm -rf staging_dir/target-*/stamp/.package_kernel_mac80211*
+            
             make -j1 V=s
         fi
         [ $? -eq 0 ] && echo "status=success" >> $GITHUB_OUTPUT || exit 1
@@ -92,7 +96,7 @@ jobs:
       if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
         cd openwrt/bin/targets/*/*
-        # 模糊匹配捕获 U-Boot 和 BL2
+        # 物理模糊捕获并重命名引导器
         find . -name "*u-boot*mt7981*" -exec cp -f {} immortalwrt-mediatek-mt7981-sl_3000-emmc-u-boot.fip \; 2>/dev/null || true
         find . -name "*bl2*emmc*" -exec cp -f {} immortalwrt-mediatek-mt7981-sl_3000-emmc-bl2.img \; 2>/dev/null || true
         echo "---- Artifacts Audit ----"
