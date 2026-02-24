@@ -6,7 +6,7 @@ SRC_DIR="${REPO_ROOT}"
 
 cd "${WORKDIR}"
 
-# 1. Feeds 修改 (回退源头封锁，恢复默认 helloworld)
+# 1. Feeds 修改
 sed -i '/helloworld/d' feeds.conf.default 2>/dev/null
 echo 'src-git helloworld https://github.com/fw876/helloworld' >>feeds.conf.default
 
@@ -24,7 +24,7 @@ if [ -f "${SRC_DIR}/custom-config/filogic.mk" ]; then
     cp -f "${SRC_DIR}/custom-config/filogic.mk" target/linux/mediatek/image/filogic.mk
 fi
 
-# 4. U-Boot 构建锁定 (物理注入确保选中)
+# 4. U-Boot 构建锁定
 [ -f .config ] && sed -i 's/.*CONFIG_PACKAGE_mt7981-atf-mtk-uboot-.*=n/CONFIG_PACKAGE_mt7981-atf-mtk-uboot-ls-emmc=y/g' .config
 [ -f .config ] && sed -i 's/.*CONFIG_PACKAGE_mt7981-atf-mtk-uboot-ls-emmc.*/CONFIG_PACKAGE_mt7981-atf-mtk-uboot-ls-emmc=y/g' .config
 
@@ -32,9 +32,8 @@ echo "CONFIG_TARGET_mediatek=y" >> .config
 echo "CONFIG_TARGET_mediatek_filogic=y" >> .config
 echo "CONFIG_TARGET_mediatek_filogic_DEVICE_luat_sl3000=y" >> .config
 
-# 5. 依赖修复 (针对 mt76 报错点的物理强化)
+# 5. 依赖修复 (针对 mt76 编译日记中出现的物理报错)
 if [ -f package/kernel/mt76/Makefile ]; then
-    # 物理覆盖：强制声明依赖 mac80211，防止并行编译冲突
     sed -i 's/PKG_BUILD_DEPENDS:=.*/PKG_BUILD_DEPENDS:=mac80211/g' package/kernel/mt76/Makefile
 fi
 
