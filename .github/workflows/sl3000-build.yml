@@ -85,8 +85,8 @@ jobs:
       id: organize
       if: env:UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
-        # 物理修正：定位至产物根目录，使用通配符适配不同内核/架构路径
-        cd openwrt/bin/targets/*/*
+        # 物理修正：使用通配符进入目标产物目录，避免硬编码路径失效
+        cd openwrt/bin/targets/*/* 2>/dev/null || exit 1
         rm -rf packages
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
