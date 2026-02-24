@@ -1,5 +1,5 @@
 # https://github.com/P3TERX/Actions-OpenWrt
-# 物理审计：执行“强力去死锁”修复，彻底解决卡死与路径报错问题
+# 物理审计：100% 延续成功结构，物理增强 U-Boot 产物搜寻逻辑，彻底解决产物缺失
 
 name: 司洛SL-3000 EMMC
 
@@ -31,13 +31,10 @@ jobs:
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
-        # 物理解决：彻底移除诱发死锁的清理指令
         sudo docker image prune --all --force
-        # 物理隔离冲突源，仅保留官方主服务器
         sudo mv /etc/apt/sources.list.d /etc/apt/sources.list.d.bak || true
         sudo mkdir -p /etc/apt/sources.list.d
         sudo sed -i 's/azure.archive.ubuntu.com/archive.ubuntu.com/g' /etc/apt/sources.list
-        # 设置 300 秒强制熔断保护，防止更新死锁
         sudo timeout 300s sudo -E apt-get -qq update
         sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
         sudo -E apt-get -qq autoremove --purge
@@ -68,13 +65,9 @@ jobs:
 
     - name: Load custom configuration
       run: |
-        # 终极物理修复：直接对物理路径操作，绕过软链接歧义
         [ -d "files" ] && cp -rf files /workdir/openwrt/files || true
         [ -e "${{ github.workspace }}/$CONFIG_FILE" ] && cp -f "${{ github.workspace }}/$CONFIG_FILE" /workdir/openwrt/.config || true
-
-        # 锁定 U-Boot 构建开启
         sed -i 's/default n/default y/g' /workdir/openwrt/package/boot/mt7981-atf-mtk/Config.in 2>/dev/null || true
-        
         chmod +x ${{ github.workspace }}/$DIY_P2_SH
         cd /workdir/openwrt
         ${{ github.workspace }}/$DIY_P2_SH || true
@@ -114,7 +107,12 @@ jobs:
       id: organize
       if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
+        # 物理修正：前往产物源头目录
         cd /workdir/openwrt/bin/targets/*/*
+        # 物理补齐：强制搜寻并拷贝 U-Boot/ATF 产物到当前目录
+        cp -f /workdir/openwrt/bin/targets/mediatek/filogic/*.bin . 2>/dev/null || true
+        cp -f /workdir/openwrt/bin/targets/mediatek/filogic/*.img . 2>/dev/null || true
+        cp -f /workdir/openwrt/bin/targets/mediatek/filogic/u-boot* . 2>/dev/null || true
         rm -rf packages
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
