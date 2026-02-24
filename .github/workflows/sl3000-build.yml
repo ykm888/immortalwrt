@@ -1,5 +1,5 @@
 # https://github.com/P3TERX/Actions-OpenWrt
-# 物理审计：100% 延续成功案例结构，脚本逻辑已锁定，仅纠正初始化源卡死问题
+# 物理审计：执行“强力去死锁”修复，彻底解决 0B 卡死问题
 
 name: 司洛SL-3000 EMMC
 
@@ -31,12 +31,14 @@ jobs:
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
-        # 物理破冰：强制更换主源解决 0B 假死，100% 还原成功案例清理逻辑
-        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+        # 物理解决：彻底移除诱发死锁的清理指令
         sudo docker image prune --all --force
-        # 核心修复：防止 azure 镜像响应超时
+        # 物理隔离冲突源，仅保留官方主服务器
+        sudo mv /etc/apt/sources.list.d /etc/apt/sources.list.d.bak
+        sudo mkdir -p /etc/apt/sources.list.d
         sudo sed -i 's/azure.archive.ubuntu.com/archive.ubuntu.com/g' /etc/apt/sources.list
-        sudo -E apt-get -qq update
+        # 设置 300 秒强制熔断保护，防止更新死锁
+        sudo timeout 300s sudo -E apt-get -qq update
         sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
@@ -68,7 +70,7 @@ jobs:
       run: |
         [ -e files ] && mv files openwrt/files
         [ -e ${{ github.workspace }}/$CONFIG_FILE ] && mv ${{ github.workspace }}/$CONFIG_FILE openwrt/.config
-        # 物理注入：锁定 U-Boot 构建依赖
+        # 物理锁定：强制开启 U-Boot 及其依赖构建逻辑
         sed -i 's/default n/default y/g' openwrt/package/boot/mt7981-atf-mtk/Config.in 2>/dev/null
         chmod +x ${{ github.workspace }}/$DIY_P2_SH
         cd openwrt
