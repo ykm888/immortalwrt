@@ -28,7 +28,7 @@ jobs:
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
-        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost /usr/local/share/boost /usr/lib/jvm
+        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost /usr/lib/jvm
         sudo -E apt-get -qq update
         sudo -E apt-get -qq install $(curl -fsSL https://raw.githubusercontent.com/ant0ny-z/tools/master/apt-install-list)
         sudo -E apt-get -qq autoremove --purge
@@ -46,7 +46,10 @@ jobs:
 
     - name: Load custom feeds
       run: |
-        [ -e $FEEDS_CONF ] && cp -f $FEEDS_CONF openwrt/feeds.conf.default
+        # 物理修复：改用 if 结构，防止因文件不存在返回退出码 1
+        if [ -e "$FEEDS_CONF" ]; then
+          cp -f "$FEEDS_CONF" openwrt/feeds.conf.default
+        fi
 
     - name: Update feeds
       run: cd openwrt && ./scripts/feeds update -a
@@ -56,7 +59,10 @@ jobs:
 
     - name: Load custom configuration
       run: |
-        [ -e $CONFIG_FILE ] && cp -f $CONFIG_FILE openwrt/.config
+        # 物理修复：改用 if 结构，防止逻辑中断
+        if [ -e "$CONFIG_FILE" ]; then
+          cp -f "$CONFIG_FILE" openwrt/.config
+        fi
         chmod +x $DIY_P1_SH
         ./$DIY_P1_SH
 
@@ -85,7 +91,7 @@ jobs:
       id: organize
       if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
-        # 物理修正：定位至产物根目录并确保路径存在
+        # 延用上一版物理修复：通配符定位
         cd openwrt/bin/targets/*/* || exit 1
         rm -rf packages
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
