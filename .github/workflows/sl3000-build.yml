@@ -1,11 +1,4 @@
-#
-# https://github.com/P3TERX/Actions-OpenWrt
-#
-# File: .github/workflows/openwrt-bulder.yml
-# Description: Build OpenWrt using GitHub Actions
-# 物理修复：针对 immortalwrt-mt798x-24.10 仓库 2410 分支物理锁定 SL-3000
-#
-
+# 物理修复：针对 6.6 内核仓库执行路径重对位与漂移拦截
 name: 司洛SL-3000 EMMC
 
 on:
@@ -13,8 +6,9 @@ on:
   workflow_dispatch:
 
 env:
-  REPO_URL: https://github.com/padavanonly/immortalwrt-mt798x-24.10
-  REPO_BRANCH: 2410
+  # 物理修正：使用 6.6 专有仓库
+  REPO_URL: https://github.com/padavanonly/immortalwrt-mt798x-6.6
+  REPO_BRANCH: openwrt-24.10
   FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: custom-config/sl3000.config
   DIY_P1_SH: diy-part1.sh
@@ -70,26 +64,28 @@ jobs:
       run: |
         [ -e files ] && mv files openwrt/files
         
-        # 物理毁灭：删除 R64 (mt7622) 干扰源，确保无物理漂移路径
+        # 物理毁灭：删除 R64 干扰源目录，切断漂移路径
         rm -rf openwrt/target/linux/mediatek/mt7622
         rm -rf openwrt/target/linux/mediatek/image/mt7622.mk
         
-        # 物理对位注入：三件套锁定 Kernel 6.6 DTS 路径
+        # 物理路径锁定：确保三件套命中 6.6 内核树的根源
+        mkdir -p openwrt/target/linux/mediatek/dts/
         mkdir -p openwrt/target/linux/mediatek/files-6.6/arch/arm64/boot/dts/mediatek/
-        cp -f $GITHUB_WORKSPACE/custom-config/mt7981b-3000-emmc.dts openwrt/target/linux/mediatek/files-6.6/arch/arm64/boot/dts/mediatek/mt7981b-sl-3000-emmc.dts 2>/dev/null || true
+        cp -f $GITHUB_WORKSPACE/custom-config/mt7981b-3000-emmc.dts openwrt/target/linux/mediatek/dts/ 2>/dev/null || true
         cp -f $GITHUB_WORKSPACE/custom-config/filogic.mk openwrt/target/linux/mediatek/image/filogic.mk 2>/dev/null || true
         
-        # 物理基因锁死：在 .config 首行强行注入 SL-3000 标识
+        # 物理基因锁死：首行强插身份标识
         echo "CONFIG_TARGET_mediatek=y" > openwrt/.config
         echo "CONFIG_TARGET_mediatek_filogic=y" >> openwrt/.config
         echo "CONFIG_TARGET_mediatek_filogic_DEVICE_sl_3000-emmc=y" >> openwrt/.config
         
         [ -e $CONFIG_FILE ] && cat $CONFIG_FILE >> openwrt/.config
+        
+        # 物理执行脚本补丁
         chmod +x $DIY_P2_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH
         
-        # 物理修复冲突
         sed -i 's/CONFIG_PACKAGE_libopenssl-afalg_sync=y/n/g' .config
 
     - name: Download package
@@ -98,7 +94,6 @@ jobs:
         cd openwrt
         make defconfig
         make download -j8
-        find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
 
     - name: Compile the firmware
@@ -108,36 +103,30 @@ jobs:
         echo -e "$(nproc) thread compile"
         make -j$(nproc) || make -j1 || make -j1 V=s
         echo "status=success" >> $GITHUB_OUTPUT
-        grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
-        [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
-
-    - name: Check space usage
-      if: (!cancelled())
-      run: df -hT
-
-    - name: Upload bin directory
-      uses: actions/upload-artifact@main
-      if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
-      with:
-        name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
-        path: openwrt/bin
 
     - name: Organize files
       id: organize
       if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
-        cd openwrt/bin/targets/mediatek/filogic || cd openwrt/bin/targets/*/*
-        find . -name "*u-boot.fip" -exec cp -f {} . \;
-        rm -rf packages
-        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+        # 物理全盘搜索：解决“找不到路径”报错
+        cd openwrt/bin/targets/
+        mkdir -p $GITHUB_WORKSPACE/firmware_out
+        find . -type f \( -name "*sl_3000*" -o -name "*sl-3000*" -o -name "*mt7981*" -o -name "*u-boot.fip*" \) -exec cp -f {} $GITHUB_WORKSPACE/firmware_out/ \;
+        
+        # 兜底物理抓取
+        if [ -z "$(ls -A $GITHUB_WORKSPACE/firmware_out)" ]; then
+            find . -type f -name "*.bin" -exec cp -f {} $GITHUB_WORKSPACE/firmware_out/ \;
+        fi
+        
+        echo "FIRMWARE=$GITHUB_WORKSPACE/firmware_out" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
 
     - name: Upload firmware directory
       uses: actions/upload-artifact@main
       if: steps.organize.outputs.status == 'success' && !cancelled()
       with:
-        name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        name: OpenWrt_firmware_SL3000
         path: ${{ env.FIRMWARE }}
 
     - name: Generate release tag
@@ -157,18 +146,3 @@ jobs:
         files: ${{ env.FIRMWARE }}/*
         tag_name: ${{ steps.tag.outputs.release_tag }}
         body_path: release.txt
-
-    - name: Delete workflow runs
-      uses: Mattraks/delete-workflow-runs@main
-      with:
-        retain_days: 0
-        keep_minimum_runs: 2
-
-    - name: Remove old Releases
-      uses: dev-drprasad/delete-older-releases@master
-      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
-      with:
-        keep_latest: 3
-        delete_tags: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
