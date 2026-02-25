@@ -1,6 +1,8 @@
 #
 # https://github.com/P3TERX/Actions-OpenWrt
-# 物理修复：移除多余脚本调用，锁定单脚本 scripts/sl3000-patch.sh 逻辑
+# File name: openwrt-builder.yml
+# Description: 司洛SL-3000 EMMC 1GB 物理锁定工作流
+# 物理修复逻辑：锁定 libopenssl 冲突，强制 1GB 内存，提取独立 U-Boot
 #
 
 name: 司洛SL-3000 EMMC
@@ -14,8 +16,8 @@ env:
   REPO_BRANCH: openwrt-21.02
   FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: custom-config/sl3000.config
-  # 物理锁定：仅保留此核心脚本
-  DIY_PATCH_SH: scripts/sl3000-patch.sh
+  DIY_P1_SH: diy-part1.sh
+  DIY_P2_SH: diy-part2.sh
   UPLOAD_BIN_DIR: false
   UPLOAD_FIRMWARE: true
   UPLOAD_RELEASE: true
@@ -50,27 +52,41 @@ jobs:
         git clone $REPO_URL -b $REPO_BRANCH openwrt
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
-    - name: Load custom feeds
+    - name: Load custom feeds & DIY Part 1
       run: |
         [ -e $FEEDS_CONF ] && cp -f $FEEDS_CONF openwrt/feeds.conf.default
-        cd openwrt && ./scripts/feeds update -a
+        chmod +x $DIY_P1_SH
+        cd openwrt
+        $GITHUB_WORKSPACE/$DIY_P1_SH
+
+    - name: Update feeds
+      run: cd openwrt && ./scripts/feeds update -a
 
     - name: Install feeds
       run: cd openwrt && ./scripts/feeds install -a
 
-    - name: Load custom configuration
+    - name: Load custom configuration & DIY Part 2
       run: |
         [ -e $CONFIG_FILE ] && cp -f $CONFIG_FILE openwrt/.config
-        # 物理修正：直接执行整合后的唯一脚本
-        chmod +x $DIY_PATCH_SH
+        chmod +x $DIY_P2_SH
         cd openwrt
-        $GITHUB_WORKSPACE/$DIY_PATCH_SH
+        $GITHUB_WORKSPACE/$DIY_P2_SH
+        
+        # 物理修正：在此处执行三件套路径注入，确保 DTS 和 MK 物理到位
+        cp -f $GITHUB_WORKSPACE/custom-config/mt7981b-3000-emmc.dts target/linux/mediatek/dts/mediatek/ 2>/dev/null || true
+        cp -f $GITHUB_WORKSPACE/custom-config/filogic.mk target/linux/mediatek/image/filogic.mk 2>/dev/null || true
+        
+        # 物理修正：静默审计发现脚本可能被 defconfig 覆盖，此处执行“物理补刀”锁定 1GB 与修复冲突
+        sed -i 's/CONFIG_PACKAGE_libopenssl-afalg_sync=y/# CONFIG_PACKAGE_libopenssl-afalg_sync is not set/g' .config
+        sed -i 's/CONFIG_LOW_MEM_256M=y/# CONFIG_LOW_MEM_256M is not set/g' .config
+        echo "CONFIG_HIGHMEM=y" >> .config
+        
+        make defconfig
 
     - name: Download package
       id: package
       run: |
         cd openwrt
-        make defconfig
         make download -j8
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
@@ -82,18 +98,14 @@ jobs:
         echo -e "$(nproc) thread compile"
         make -j$(nproc) || make -j1 || make -j1 V=s
         echo "status=success" >> $GITHUB_OUTPUT
-        grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
-        [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
-        echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
 
     - name: Organize files
       id: organize
       if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
         cd openwrt/bin/targets/*/*
-        # 物理注入：独立提取 U-Boot 引导文件
+        # 物理提取：锁定独立 U-Boot (.fip) 与完整固件产物
         find . -name "*u-boot.fip" -exec cp -f {} . \;
-        find . -name "*u-boot-ls-emmc.bin" -exec cp -f {} . \;
         rm -rf packages
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
@@ -102,30 +114,23 @@ jobs:
       uses: actions/upload-artifact@main
       if: steps.organize.outputs.status == 'success' && !cancelled()
       with:
-        name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        name: OpenWrt_firmware_${{ github.run_id }}
         path: ${{ env.FIRMWARE }}
 
     - name: Generate release tag
       id: tag
       if: env.UPLOAD_RELEASE == 'true' && !cancelled()
       run: |
-        echo "release_tag=$(date +"%Y.%m.%d-%H%M%S")" >> $GITHUB_OUTPUT
+        echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
         touch release.txt
         echo "status=success" >> $GITHUB_OUTPUT
 
-    - name: 发布固件至Release
+    - name: Upload firmware to release
       uses: softprops/action-gh-release@v2.1.0
       if: steps.tag.outputs.status == 'success' && !cancelled()
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         files: ${{ env.FIRMWARE }}/*
-        name: ${{ env.FILE_DATE }}-SL3000-EMMC-Build
         tag_name: ${{ steps.tag.outputs.release_tag }}
         body_path: release.txt
-
-    - name: Delete workflow runs
-      uses: Mattraks/delete-workflow-runs@v2
-      with:
-        retain_days: 1
-        keep_minimum_runs: 3
