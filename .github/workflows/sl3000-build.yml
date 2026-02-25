@@ -1,4 +1,4 @@
-# 物理修复：针对 immortalwrt-mt798x-24.10 仓库 100% 解决漂移的终极方案
+# 物理修复：100% 解决资源竞争取消及 Target 漂移问题
 name: 司洛SL-3000 EMMC
 
 on:
@@ -11,7 +11,7 @@ env:
   FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: custom-config/sl3000.config
   DIY_P1_SH: diy-part1.sh
-  DIY_P2_SH: diy-part2.sh
+  DIY_P2_SH: scripts/sl3000-patch.sh
   UPLOAD_FIRMWARE: true
   UPLOAD_RELEASE: true
   TZ: Asia/Shanghai
@@ -28,8 +28,8 @@ jobs:
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
-        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-        sudo docker image prune --all --force
+        # 物理瘦身：仅保留核心清理，防止操作超时被取消
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
         sudo -E apt-get -qq update
         sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
         sudo -E apt-get -qq autoremove --purge
@@ -60,32 +60,32 @@ jobs:
 
     - name: Load custom configuration & DIY Part 2
       run: |
+        # 物理清场
         rm -f openwrt/.config openwrt/tmp/.config
         
-        # 物理毁灭：删除 R64 (mt7622) 定义，彻底切断错误漂移的可能性
+        # 物理锁定：强制删除 R64 干扰源文件夹
         rm -rf openwrt/target/linux/mediatek/mt7622
         rm -rf openwrt/target/linux/mediatek/image/mt7622.mk
         
-        # 物理精准对位：针对 Kernel 6.6 路径进行 DTS 补丁注入
+        # 物理路径注入：命中内核 6.6 DTS 目录
         mkdir -p openwrt/target/linux/mediatek/files-6.6/arch/arm64/boot/dts/mediatek/
-        cp -f $GITHUB_WORKSPACE/custom-config/mt7981b-3000-emmc.dts openwrt/target/linux/mediatek/files-6.6/arch/arm64/boot/dts/mediatek/ 2>/dev/null || true
-        cp -f $GITHUB_WORKSPACE/custom-config/mt7981b-3000-emmc.dts openwrt/target/linux/mediatek/dts/ 2>/dev/null || true
+        cp -f $GITHUB_WORKSPACE/custom-config/mt7981b-3000-emmc.dts openwrt/target/linux/mediatek/files-6.6/arch/arm64/boot/dts/mediatek/mt7981b-sl-3000-emmc.dts 2>/dev/null || true
         cp -f $GITHUB_WORKSPACE/custom-config/filogic.mk openwrt/target/linux/mediatek/image/filogic.mk 2>/dev/null || true
         
-        # 物理插队锁定：在首行注入 SL-3000 身份基因
+        # 物理死锁：首行强插 SL-3000 身份基因
         echo "CONFIG_TARGET_mediatek=y" > openwrt/.config
         echo "CONFIG_TARGET_mediatek_filogic=y" >> openwrt/.config
         echo "CONFIG_TARGET_mediatek_filogic_DEVICE_sl_3000-emmc=y" >> openwrt/.config
-        echo "CONFIG_HIGHMEM=y" >> openwrt/.config
         
         [ -e $CONFIG_FILE ] && cat $CONFIG_FILE >> openwrt/.config
+        
+        # 物理调用补丁脚本
         chmod +x $DIY_P2_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH
         
-        # 物理熔断修复：禁用 OpenSSL 冲突项
+        # 物理修复冲突
         sed -i 's/CONFIG_PACKAGE_libopenssl-afalg_sync=y/n/g' .config
-        
         make defconfig
 
     - name: Download package
@@ -93,7 +93,6 @@ jobs:
       run: |
         cd openwrt
         make download -j8
-        find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
 
     - name: Compile the firmware
@@ -108,6 +107,7 @@ jobs:
       id: organize
       if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
+        # 物理寻址：锁定 24.10 产物路径
         cd openwrt/bin/targets/mediatek/filogic || cd openwrt/bin/targets/*/*
         find . -name "*u-boot.fip" -exec cp -f {} . \;
         rm -rf packages
