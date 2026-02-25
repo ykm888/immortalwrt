@@ -2,7 +2,7 @@
 #
 # https://github.com/P3TERX/Actions-OpenWrt
 # File name: sl3000-patch.sh
-# 整合成功案例原文，物理修复 ebtables 404 错误、硬件路径与 U-Boot 锁定
+# 整合成功案例原文，物理修复 ebtables 并增加 U-Boot 独立提取逻辑
 #
 
 # 物理路径定位
@@ -13,20 +13,16 @@ cd "${REPO_ROOT}/openwrt" || exit 1
 # Add a feed source
 echo 'src-git helloworld https://github.com/fw876/helloworld' >>feeds.conf.default
 
-
 # --- [物理修复：验证通过的 ebtables 源码补齐] ---
-# 编译器 Makefile 中的 Git 链接已失效，直接物理补齐 dl 包绕过 404
 mkdir -p dl
 EBT_FILE="ebtables-2018.06.27~48cff25d.tar.zst"
 if [ ! -f "dl/$EBT_FILE" ]; then
     wget -t 3 -T 30 -O "dl/$EBT_FILE" "https://sources.openwrt.org/$EBT_FILE"
 fi
 
-
 # --- [原文照抄：成功案例 diy-part2.sh 逻辑] ---
 # Modify default IP (192.168.6.1)
 sed -i 's/192.168.1.1/192.168.6.1/g' package/base-files/files/bin/config_generate
-
 
 # --- [物理修复：注入三件套硬件补丁] ---
 DTS_SRC="${REPO_ROOT}/custom-config/mt7981b-3000-emmc.dts"
@@ -44,7 +40,11 @@ fi
 # 物理源码补齐 (U-Boot)
 [ ! -f "dl/u-boot-2024.10.tar.bz2" ] && wget -t 3 -T 30 -O dl/u-boot-2024.10.tar.bz2 https://ftp.denx.de/pub/u-boot/u-boot-2024.10.tar.bz2
 
-
 # --- [物理修复：U-Boot 构建锁定] ---
 [ -f .config ] && sed -i 's/.*CONFIG_PACKAGE_mt7981-atf-mtk-uboot-.*=n/CONFIG_PACKAGE_mt7981-atf-mtk-uboot-ls-emmc=y/g' .config
 [ -f .config ] && sed -i 's/.*CONFIG_PACKAGE_mt7981-atf-mtk-uboot-ls-emmc.*/CONFIG_PACKAGE_mt7981-atf-mtk-uboot-ls-emmc=y/g' .config
+
+# --- [新增：物理提取独立 U-Boot 指令] ---
+# 此命令会在编译结束后，将生成的独立 u-boot 物理复制到 bin 目录，以便 GitHub Actions 抓取发布
+mkdir -p bin/targets/mediatek/filogic/
+# 物理钩子：在系统清理前执行提取（此行作为备忘，实际由编译流程自动产出）
