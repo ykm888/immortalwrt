@@ -1,3 +1,7 @@
+#
+# 物理审计：基于成功案例逻辑，锁定 SL-3000 1GB EMMC 完整编译产物
+#
+
 DTS_DIR := $(DTS_DIR)/mediatek
 
 define Image/Prepare
@@ -63,6 +67,15 @@ define Device/sl_3000-emmc
 	fit lzma $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb
   KERNEL_INITRAMFS := kernel-bin | lzma | \
 	fit lzma $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb with-initrd | pad-to 64k
+  
+  # 物理修正：模仿成功案例，定义多镜像输出
+  IMAGES := sysupgrade.bin emmc-gpt.img
   IMAGE/sysupgrade.bin := sysupgrade-tar | append-metadata
+  # 物理锁定：利用 mt798x-gpt 合成 eMMC 专用引导镜像，并注入 ls-emmc 引导包
+  IMAGE/emmc-gpt.img := mt798x-gpt emmc | mt7981-bl31-uboot ls-emmc
+  
+  # 物理注入：定义 ARTIFACTS 以导出独立 FIP 文件 (U-Boot)
+  ARTIFACTS := emmc-bl31-uboot.fip
+  ARTIFACT/emmc-bl31-uboot.fip := mt7981-bl31-uboot ls-emmc
 endef
 TARGET_DEVICES += sl_3000-emmc
