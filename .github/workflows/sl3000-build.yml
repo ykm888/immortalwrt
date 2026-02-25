@@ -2,7 +2,7 @@
 # https://github.com/P3TERX/Actions-OpenWrt
 # File name: OpenWrt-builder.yml
 # Description: Build OpenWrt using GitHub Actions
-# 物理修复：替换失效插件，保持 U-Boot 提取与时间戳标签
+# 物理修复：彻底移除失效的清理插件，保留 U-Boot 提取与唯一标签逻辑
 #
 
 name: OpenWrt Builder
@@ -131,9 +131,3 @@ jobs:
       with:
         tag_name: ${{ steps.tag.outputs.release_tag }}
         files: ${{ env.FIRMWARE }}/*
-
-    - name: Delete workflow runs
-      uses: GitRookie/delete-workflow-runs@main
-      with:
-        retain_days: 1
-        keep_minimum_runs: 3
