@@ -1,21 +1,16 @@
-# 物理修复：针对 6.6 内核仓库执行路径重对位与漂移拦截
-name: 司洛SL-3000 EMMC
+name: 司洛SL-3000 EMMC (Kernel 6.6)
 
 on:
   repository_dispatch:
   workflow_dispatch:
 
 env:
-  # 物理修正：使用 6.6 专有仓库
   REPO_URL: https://github.com/padavanonly/immortalwrt-mt798x-6.6
-  REPO_BRANCH: openwrt-24.10
+  REPO_BRANCH: openwrt-24.10-6.6
   FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: custom-config/sl3000.config
   DIY_P1_SH: diy-part1.sh
   DIY_P2_SH: scripts/sl3000-patch.sh
-  UPLOAD_BIN_DIR: false
-  UPLOAD_FIRMWARE: true
-  UPLOAD_RELEASE: true
   TZ: Asia/Shanghai
 
 jobs:
@@ -27,23 +22,14 @@ jobs:
       uses: actions/checkout@main
 
     - name: Initialization environment
-      env:
-        DEBIAN_FRONTEND: noninteractive
       run: |
         sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-        sudo docker image prune --all --force
         sudo -E apt-get -qq update
         sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
-        sudo -E apt-get -qq autoremove --purge
-        sudo -E apt-get -qq clean
         sudo timedatectl set-timezone "$TZ"
-        sudo mkdir -p /workdir
-        sudo chown $USER:$GROUPS /workdir
 
     - name: Clone source code
-      working-directory: /workdir
       run: |
-        df -hT $PWD
         git clone --depth 1 $REPO_URL -b $REPO_BRANCH openwrt
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
@@ -51,98 +37,37 @@ jobs:
       run: |
         [ -e $FEEDS_CONF ] && cp -f $FEEDS_CONF openwrt/feeds.conf.default
         chmod +x $DIY_P1_SH
-        cd openwrt
-        $GITHUB_WORKSPACE/$DIY_P1_SH
+        cd openwrt && $GITHUB_WORKSPACE/$DIY_P1_SH
 
-    - name: Update feeds
-      run: cd openwrt && ./scripts/feeds update -a
-
-    - name: Install feeds
-      run: cd openwrt && ./scripts/feeds install -a
+    - name: Update/Install feeds
+      run: cd openwrt && ./scripts/feeds update -a && ./scripts/feeds install -a
 
     - name: Load custom configuration
       run: |
-        [ -e files ] && mv files openwrt/files
-        
-        # 物理毁灭：删除 R64 干扰源目录，切断漂移路径
-        rm -rf openwrt/target/linux/mediatek/mt7622
-        rm -rf openwrt/target/linux/mediatek/image/mt7622.mk
-        
-        # 物理路径锁定：确保三件套命中 6.6 内核树的根源
-        mkdir -p openwrt/target/linux/mediatek/dts/
-        mkdir -p openwrt/target/linux/mediatek/files-6.6/arch/arm64/boot/dts/mediatek/
-        cp -f $GITHUB_WORKSPACE/custom-config/mt7981b-3000-emmc.dts openwrt/target/linux/mediatek/dts/ 2>/dev/null || true
-        cp -f $GITHUB_WORKSPACE/custom-config/filogic.mk openwrt/target/linux/mediatek/image/filogic.mk 2>/dev/null || true
-        
-        # 物理基因锁死：首行强插身份标识
-        echo "CONFIG_TARGET_mediatek=y" > openwrt/.config
-        echo "CONFIG_TARGET_mediatek_filogic=y" >> openwrt/.config
-        echo "CONFIG_TARGET_mediatek_filogic_DEVICE_sl_3000-emmc=y" >> openwrt/.config
-        
-        [ -e $CONFIG_FILE ] && cat $CONFIG_FILE >> openwrt/.config
-        
-        # 物理执行脚本补丁
+        # 物理注入补丁脚本
+        [ -e $CONFIG_FILE ] && cp -f $CONFIG_FILE openwrt/.config
         chmod +x $DIY_P2_SH
-        cd openwrt
-        $GITHUB_WORKSPACE/$DIY_P2_SH
-        
-        sed -i 's/CONFIG_PACKAGE_libopenssl-afalg_sync=y/n/g' .config
+        cd openwrt && $GITHUB_WORKSPACE/$DIY_P2_SH
 
-    - name: Download package
-      id: package
+    - name: Compile the firmware
       run: |
         cd openwrt
         make defconfig
-        make download -j8
-        find dl -size -1024c -exec rm -f {} \;
-
-    - name: Compile the firmware
-      id: compile
-      run: |
-        cd openwrt
-        echo -e "$(nproc) thread compile"
-        make -j$(nproc) || make -j1 || make -j1 V=s
-        echo "status=success" >> $GITHUB_OUTPUT
-        echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+        make -j$(nproc) || make -j1 V=s
 
     - name: Organize files
       id: organize
-      if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
-        # 物理全盘搜索：解决“找不到路径”报错
-        cd openwrt/bin/targets/
         mkdir -p $GITHUB_WORKSPACE/firmware_out
-        find . -type f \( -name "*sl_3000*" -o -name "*sl-3000*" -o -name "*mt7981*" -o -name "*u-boot.fip*" \) -exec cp -f {} $GITHUB_WORKSPACE/firmware_out/ \;
-        
-        # 兜底物理抓取
-        if [ -z "$(ls -A $GITHUB_WORKSPACE/firmware_out)" ]; then
-            find . -type f -name "*.bin" -exec cp -f {} $GITHUB_WORKSPACE/firmware_out/ \;
-        fi
-        
+        cd openwrt/bin/targets/
+        # 物理全盘递归搜索：捕获 sysupgrade, u-boot.fip, preloader 等所有产物
+        find . -type f \( -name "*sl_3000*" -o -name "*u-boot.fip*" -o -name "*preloader*" -o -name "*gpt.bin*" \) -exec cp -f {} $GITHUB_WORKSPACE/firmware_out/ \;
         echo "FIRMWARE=$GITHUB_WORKSPACE/firmware_out" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
 
-    - name: Upload firmware directory
+    - name: Upload firmware
       uses: actions/upload-artifact@main
-      if: steps.organize.outputs.status == 'success' && !cancelled()
+      if: steps.organize.outputs.status == 'success'
       with:
-        name: OpenWrt_firmware_SL3000
+        name: OpenWrt_6.6_SL3000_Uboot
         path: ${{ env.FIRMWARE }}
-
-    - name: Generate release tag
-      id: tag
-      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
-      run: |
-        echo "release_tag=$(date +"%Y.%m.%d-%H%M")-SL3000" >> $GITHUB_OUTPUT
-        touch release.txt
-        echo "status=success" >> $GITHUB_OUTPUT
-
-    - name: 发布固件至Release
-      uses: softprops/action-gh-release@v2.1.0
-      if: steps.tag.outputs.status == 'success' && !cancelled()
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        files: ${{ env.FIRMWARE }}/*
-        tag_name: ${{ steps.tag.outputs.release_tag }}
-        body_path: release.txt
