@@ -1,4 +1,4 @@
-# 物理修复：彻底解决 Target 漂移至 R64 的终极方案
+# 物理修复：针对 immortalwrt-mt798x-24.10 仓库 100% 解决漂移的终极方案
 name: 司洛SL-3000 EMMC
 
 on:
@@ -7,7 +7,7 @@ on:
 
 env:
   REPO_URL: https://github.com/padavanonly/immortalwrt-mt798x-24.10
-  REPO_BRANCH: openwrt-21.02
+  REPO_BRANCH: openwrt-24.10
   FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: custom-config/sl3000.config
   DIY_P1_SH: diy-part1.sh
@@ -28,7 +28,6 @@ jobs:
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
-        # 物理手术：深度清理所有潜在残留
         sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
         sudo docker image prune --all --force
         sudo -E apt-get -qq update
@@ -36,7 +35,6 @@ jobs:
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
         sudo timedatectl set-timezone "$TZ"
-        # 彻底清空 workdir，不给缓存留空间
         sudo rm -rf /workdir
         sudo mkdir -p /workdir
         sudo chown $USER:$GROUPS /workdir
@@ -44,7 +42,6 @@ jobs:
     - name: Clone source code
       working-directory: /workdir
       run: |
-        # 物理隔离：不使用任何增量更新，保证源码纯净
         git clone --depth 1 $REPO_URL -b $REPO_BRANCH openwrt
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
@@ -63,29 +60,32 @@ jobs:
 
     - name: Load custom configuration & DIY Part 2
       run: |
-        # 物理修正：先强制删除任何可能存在的旧配置
         rm -f openwrt/.config openwrt/tmp/.config
         
-        # 物理手术：将成功案例配置合并到 .config 之前，先物理强行锁定三件套
-        cp -f $GITHUB_WORKSPACE/custom-config/mt7981b-3000-emmc.dts openwrt/target/linux/mediatek/dts/mediatek/ 2>/dev/null || true
+        # 物理毁灭：删除 R64 (mt7622) 定义，彻底切断错误漂移的可能性
+        rm -rf openwrt/target/linux/mediatek/mt7622
+        rm -rf openwrt/target/linux/mediatek/image/mt7622.mk
+        
+        # 物理精准对位：针对 Kernel 6.6 路径进行 DTS 补丁注入
+        mkdir -p openwrt/target/linux/mediatek/files-6.6/arch/arm64/boot/dts/mediatek/
+        cp -f $GITHUB_WORKSPACE/custom-config/mt7981b-3000-emmc.dts openwrt/target/linux/mediatek/files-6.6/arch/arm64/boot/dts/mediatek/ 2>/dev/null || true
+        cp -f $GITHUB_WORKSPACE/custom-config/mt7981b-3000-emmc.dts openwrt/target/linux/mediatek/dts/ 2>/dev/null || true
         cp -f $GITHUB_WORKSPACE/custom-config/filogic.mk openwrt/target/linux/mediatek/image/filogic.mk 2>/dev/null || true
         
-        # 物理死锁：在加载用户 .config 之前，先向 .config 注入身份证明
+        # 物理插队锁定：在首行注入 SL-3000 身份基因
         echo "CONFIG_TARGET_mediatek=y" > openwrt/.config
         echo "CONFIG_TARGET_mediatek_filogic=y" >> openwrt/.config
         echo "CONFIG_TARGET_mediatek_filogic_DEVICE_sl_3000-emmc=y" >> openwrt/.config
+        echo "CONFIG_HIGHMEM=y" >> openwrt/.config
         
-        # 物理叠加：追加用户配置，并用脚本进行冲突处理
         [ -e $CONFIG_FILE ] && cat $CONFIG_FILE >> openwrt/.config
         chmod +x $DIY_P2_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH
         
-        # 物理熔断：最后一步补丁，确保 libopenssl 不冲突且 1GB 内存开启
+        # 物理熔断修复：禁用 OpenSSL 冲突项
         sed -i 's/CONFIG_PACKAGE_libopenssl-afalg_sync=y/n/g' .config
-        echo "CONFIG_HIGHMEM=y" >> .config
         
-        # 强制更新配置
         make defconfig
 
     - name: Download package
@@ -101,7 +101,6 @@ jobs:
       run: |
         cd openwrt
         echo -e "$(nproc) thread compile"
-        # 强制使用 SL-3000 编译命令
         make -j$(nproc) || make -j1 || make -j1 V=s
         echo "status=success" >> $GITHUB_OUTPUT
 
@@ -109,7 +108,6 @@ jobs:
       id: organize
       if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
-        # 物理检查：如果路径不对，强制进入 mediatek 子目录查找
         cd openwrt/bin/targets/mediatek/filogic || cd openwrt/bin/targets/*/*
         find . -name "*u-boot.fip" -exec cp -f {} . \;
         rm -rf packages
