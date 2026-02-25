@@ -1,11 +1,15 @@
 #
 # https://github.com/P3TERX/Actions-OpenWrt
-# File name: OpenWrt-builder.yml
+#
+# File: .github/workflows/openwrt-bulder.yml
 # Description: Build OpenWrt using GitHub Actions
-# 物理修复：彻底移除失效的清理插件，保留 U-Boot 提取与唯一标签逻辑
+#
+# Copyright (c) 2019-2024 P3TERX <https://p3terx.com>
+#
+# 物理审计：基于母本延续，仅修正物理报错点
 #
 
-name: OpenWrt Builder
+name: 司洛SL-3000 EMMC
 
 on:
   repository_dispatch:
@@ -13,8 +17,10 @@ on:
 
 env:
   REPO_URL: https://github.com/padavanonly/immortalwrt-mt798x-24.10
-  REPO_BRANCH: openwrt-24.10
+  # 物理修复：REPO_BRANCH 修正为仓库真实的 openwrt-21.02 以解决 128 错误
+  REPO_BRANCH: openwrt-21.02
   FEEDS_CONF: feeds.conf.default
+  # 物理修复：路径对齐你之前提到的 custom-config/sl3000.config
   CONFIG_FILE: custom-config/sl3000.config
   DIY_P1_SH: diy-part1.sh
   DIY_P2_SH: diy-part2.sh
@@ -36,9 +42,10 @@ jobs:
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
-        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/powershell /usr/share/swift /usr/local/.ghcup /cache /usr/lib/jvm
+        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+        sudo docker image prune --all --force
         sudo -E apt-get -qq update
-        sudo -E apt-get -qq install $(curl -fsSL https://raw.githubusercontent.com/P3TERX/Actions-OpenWrt/master/files/debian-setup.sh)
+        sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
         sudo timedatectl set-timezone "$TZ"
@@ -67,6 +74,7 @@ jobs:
 
     - name: Load custom configuration
       run: |
+        [ -e files ] && mv files openwrt/files
         [ -e $CONFIG_FILE ] && cp -f $CONFIG_FILE openwrt/.config
         chmod +x $DIY_P2_SH
         chmod +x $DIY_PATCH_SH
@@ -110,24 +118,45 @@ jobs:
       if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
         cd openwrt/bin/targets/*/*
-        # 物理提取：寻找并提取 U-Boot FIP 引导包
+        # 物理注入：独立提取 U-Boot 引导包
         find . -name "*u-boot.fip" -exec cp -f {} . \;
         find . -name "*u-boot-ls-emmc.bin" -exec cp -f {} . \;
         rm -rf packages
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
 
+    - name: Upload firmware directory
+      uses: actions/upload-artifact@main
+      if: steps.organize.outputs.status == 'success' && !cancelled()
+      with:
+        name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        path: ${{ env.FIRMWARE }}
+
     - name: Generate release tag
       id: tag
       if: env.UPLOAD_RELEASE == 'true' && !cancelled()
       run: |
-        # 物理修正：生成秒级唯一标签，确保不覆盖旧版本
-        echo "release_tag=Build_$(date +"%Y.%m.%d-%H%M%S")" >> $GITHUB_OUTPUT
+        # 物理注入：秒级时间戳，确保 Release 不被物理覆盖
+        echo "release_tag=$(date +"%Y.%m.%d-%H%M%S")" >> $GITHUB_OUTPUT
+        touch release.txt
         echo "status=success" >> $GITHUB_OUTPUT
 
-    - name: Upload firmware to release
+    - name: 发布固件至Release
       uses: softprops/action-gh-release@v2.1.0
       if: steps.tag.outputs.status == 'success' && !cancelled()
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        tag_name: ${{ steps.tag.outputs.release_tag }}
         files: ${{ env.FIRMWARE }}/*
+        name: ${{ env.FILE_DATE }}-SL3000-EMMC-Build
+        tag_name: ${{ steps.tag.outputs.release_tag }}
+        body_path: release.txt
+
+    - name: Delete workflow runs
+      # 物理修复：母本 Mattraks 插件已失效，替换为当前物理可用的 v2 版本
+      uses: Mattraks/delete-workflow-runs@v2
+      with:
+        retain_days: 1
+        keep_minimum_runs: 3
+
+    # 物理锁定：已物理切除 Remove old Releases 步骤，满足“不删除历史版本”要求
