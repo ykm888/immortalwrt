@@ -1,7 +1,3 @@
-#
-# 物理审计：基于成功案例逻辑，锁定 SL-3000 1GB EMMC 完整编译产物
-#
-
 DTS_DIR := $(DTS_DIR)/mediatek
 
 define Image/Prepare
@@ -16,22 +12,6 @@ endef
 
 define Build/mt7981-bl31-uboot
 	cat $(STAGING_DIR_IMAGE)/mt7981_$1-u-boot.fip >> $@
-endef
-
-define Build/mt7986-bl2
-	cat $(STAGING_DIR_IMAGE)/mt7986-$1-bl2.img >> $@
-endef
-
-define Build/mt7986-bl31-uboot
-	cat $(STAGING_DIR_IMAGE)/mt7986_$1-u-boot.fip >> $@
-endef
-
-define Build/mt7988-bl2
-	cat $(STAGING_DIR_IMAGE)/mt7988-$1-bl2.img >> $@
-endef
-
-define Build/mt7988-bl31-uboot
-	cat $(STAGING_DIR_IMAGE)/mt7988_$1-u-boot.fip >> $@
 endef
 
 define Build/mt798x-gpt
@@ -58,24 +38,18 @@ endef
 
 define Device/sl_3000-emmc
   DEVICE_VENDOR := SL
-  DEVICE_MODEL := 3000
-  DEVICE_VARIANT := eMMC
-  DEVICE_DTS := mt7981b-3000-emmc
+  DEVICE_MODEL := 3000 eMMC
+  DEVICE_DTS := mt7981b-sl-3000-emmc
   DEVICE_DTS_DIR := ../dts
-  DEVICE_PACKAGES := kmod-mt7915e kmod-mt7981-firmware mt7981-wo-firmware kmod-usb3
-  KERNEL := kernel-bin | lzma | \
-	fit lzma $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb
+  DEVICE_PACKAGES := kmod-mt7915e kmod-mt7981-firmware mt7981-wo-firmware automount coremark blkid blockdev fdisk f2fsck mkf2fs kmod-mmc
+  KERNEL := kernel-bin | lzma | fit lzma $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb
   KERNEL_INITRAMFS := kernel-bin | lzma | \
 	fit lzma $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb with-initrd | pad-to 64k
-  
-  # 物理修正：模仿成功案例，定义多镜像输出
-  IMAGES := sysupgrade.bin emmc-gpt.img
   IMAGE/sysupgrade.bin := sysupgrade-tar | append-metadata
-  # 物理锁定：利用 mt798x-gpt 合成 eMMC 专用引导镜像，并注入 ls-emmc 引导包
-  IMAGE/emmc-gpt.img := mt798x-gpt emmc | mt7981-bl31-uboot ls-emmc
-  
-  # 物理注入：定义 ARTIFACTS 以导出独立 FIP 文件 (U-Boot)
-  ARTIFACTS := emmc-bl31-uboot.fip
-  ARTIFACT/emmc-bl31-uboot.fip := mt7981-bl31-uboot ls-emmc
+  # [物理修复] 针对 U-Boot 固件生成的物理定义
+  ARTIFACTS := emmc-gpt.bin emmc-preloader.bin emmc-bl31-uboot.fip
+  ARTIFACT/emmc-gpt.bin := mt798x-gpt emmc
+  ARTIFACT/emmc-preloader.bin := mt7981-bl2 emmc-comb
+  ARTIFACT/emmc-bl31-uboot.fip := mt7981-bl31-uboot sl_3000-emmc
 endef
 TARGET_DEVICES += sl_3000-emmc
