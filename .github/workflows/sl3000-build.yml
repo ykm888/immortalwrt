@@ -1,12 +1,6 @@
 #
 # https://github.com/P3TERX/Actions-OpenWrt
-#
-# File: .github/workflows/openwrt-bulder.yml
-# Description: Build OpenWrt using GitHub Actions
-#
-# Copyright (c) 2019-2024 P3TERX <https://p3terx.com>
-#
-# 物理审计：基于母本延续，仅修正物理报错点
+# 物理修复：移除多余脚本调用，锁定单脚本 scripts/sl3000-patch.sh 逻辑
 #
 
 name: 司洛SL-3000 EMMC
@@ -17,13 +11,10 @@ on:
 
 env:
   REPO_URL: https://github.com/padavanonly/immortalwrt-mt798x-24.10
-  # 物理修复：REPO_BRANCH 修正为仓库真实的 openwrt-21.02 以解决 128 错误
   REPO_BRANCH: openwrt-21.02
   FEEDS_CONF: feeds.conf.default
-  # 物理修复：路径对齐你之前提到的 custom-config/sl3000.config
   CONFIG_FILE: custom-config/sl3000.config
-  DIY_P1_SH: diy-part1.sh
-  DIY_P2_SH: diy-part2.sh
+  # 物理锁定：仅保留此核心脚本
   DIY_PATCH_SH: scripts/sl3000-patch.sh
   UPLOAD_BIN_DIR: false
   UPLOAD_FIRMWARE: true
@@ -62,24 +53,17 @@ jobs:
     - name: Load custom feeds
       run: |
         [ -e $FEEDS_CONF ] && cp -f $FEEDS_CONF openwrt/feeds.conf.default
-        chmod +x $DIY_P1_SH
-        cd openwrt
-        $GITHUB_WORKSPACE/$DIY_P1_SH
-
-    - name: Update feeds
-      run: cd openwrt && ./scripts/feeds update -a
+        cd openwrt && ./scripts/feeds update -a
 
     - name: Install feeds
       run: cd openwrt && ./scripts/feeds install -a
 
     - name: Load custom configuration
       run: |
-        [ -e files ] && mv files openwrt/files
         [ -e $CONFIG_FILE ] && cp -f $CONFIG_FILE openwrt/.config
-        chmod +x $DIY_P2_SH
+        # 物理修正：直接执行整合后的唯一脚本
         chmod +x $DIY_PATCH_SH
         cd openwrt
-        $GITHUB_WORKSPACE/$DIY_P2_SH
         $GITHUB_WORKSPACE/$DIY_PATCH_SH
 
     - name: Download package
@@ -102,23 +86,12 @@ jobs:
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
 
-    - name: Check space usage
-      if: (!cancelled())
-      run: df -hT
-
-    - name: Upload bin directory
-      uses: actions/upload-artifact@main
-      if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
-      with:
-        name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
-        path: openwrt/bin
-
     - name: Organize files
       id: organize
       if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
         cd openwrt/bin/targets/*/*
-        # 物理注入：独立提取 U-Boot 引导包
+        # 物理注入：独立提取 U-Boot 引导文件
         find . -name "*u-boot.fip" -exec cp -f {} . \;
         find . -name "*u-boot-ls-emmc.bin" -exec cp -f {} . \;
         rm -rf packages
@@ -136,7 +109,6 @@ jobs:
       id: tag
       if: env.UPLOAD_RELEASE == 'true' && !cancelled()
       run: |
-        # 物理注入：秒级时间戳，确保 Release 不被物理覆盖
         echo "release_tag=$(date +"%Y.%m.%d-%H%M%S")" >> $GITHUB_OUTPUT
         touch release.txt
         echo "status=success" >> $GITHUB_OUTPUT
@@ -153,10 +125,7 @@ jobs:
         body_path: release.txt
 
     - name: Delete workflow runs
-      # 物理修复：母本 Mattraks 插件已失效，替换为当前物理可用的 v2 版本
       uses: Mattraks/delete-workflow-runs@v2
       with:
         retain_days: 1
         keep_minimum_runs: 3
-
-    # 物理锁定：已物理切除 Remove old Releases 步骤，满足“不删除历史版本”要求
