@@ -2,7 +2,7 @@
 # https://github.com/P3TERX/Actions-OpenWrt
 # File name: OpenWrt-builder.yml
 # Description: Build OpenWrt using GitHub Actions
-# 物理修复：语法错误修正，独立提取 U-Boot，不删除历史版本
+# 物理修复：替换失效插件，保持 U-Boot 提取与时间戳标签
 #
 
 name: OpenWrt Builder
@@ -110,7 +110,7 @@ jobs:
       if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
         cd openwrt/bin/targets/*/*
-        # 物理提取指令：强制提取 U-Boot FIP 引导文件
+        # 物理提取：寻找并提取 U-Boot FIP 引导包
         find . -name "*u-boot.fip" -exec cp -f {} . \;
         find . -name "*u-boot-ls-emmc.bin" -exec cp -f {} . \;
         rm -rf packages
@@ -121,7 +121,7 @@ jobs:
       id: tag
       if: env.UPLOAD_RELEASE == 'true' && !cancelled()
       run: |
-        # 物理修正：在此处生成唯一时间戳标签
+        # 物理修正：生成秒级唯一标签，确保不覆盖旧版本
         echo "release_tag=Build_$(date +"%Y.%m.%d-%H%M%S")" >> $GITHUB_OUTPUT
         echo "status=success" >> $GITHUB_OUTPUT
 
@@ -133,7 +133,7 @@ jobs:
         files: ${{ env.FIRMWARE }}/*
 
     - name: Delete workflow runs
-      uses: Mattraider/delete-workflow-runs@main
+      uses: GitRookie/delete-workflow-runs@main
       with:
         retain_days: 1
         keep_minimum_runs: 3
