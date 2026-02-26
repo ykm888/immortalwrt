@@ -52,11 +52,10 @@ jobs:
       run: |
         cd openwrt
         make defconfig
-        # [彻底解决开关] 物理强制独立编译 ATF，确保生成 mt7981-emmc-comb-bl2.img
-        # 这一步如果不成功，流程会直接报错熔断，不再浪费时间
-        make package/boot/trusted-firmware-a-mt7981/compile V=s -j1
+        # [彻底解决关键] 物理锁定：强制执行刚刚在脚本中注入的编译目标
+        make package/boot/uboot-mediatek/compile V=s -j1
         
-        # ATF 编译完成后，再执行主流程
+        # 执行主流程全量编译
         make -j$(nproc) || make -j1 V=s
 
     - name: Organize files
@@ -64,7 +63,7 @@ jobs:
       run: |
         mkdir -p $GITHUB_WORKSPACE/firmware_out
         cd openwrt/bin/targets/
-        # 搜集所有救砖物理文件
+        # 物理搜集救砖关键产物：preloader, fip, gpt
         find . -type f \( -name "*sl_3000*" -o -name "*u-boot.fip*" -o -name "*preloader*" -o -name "*gpt.bin*" \) -exec cp -f {} $GITHUB_WORKSPACE/firmware_out/ \;
         echo "FIRMWARE=$GITHUB_WORKSPACE/firmware_out" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
