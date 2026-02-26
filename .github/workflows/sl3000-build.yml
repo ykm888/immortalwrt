@@ -1,4 +1,4 @@
-name: 司洛SL-3000 EMMC (Kernel 6.6)
+name: 司洛SL-3000 EMMC (Kernel 6.6) 救砖固件构建
 
 on:
   repository_dispatch:
@@ -23,10 +23,8 @@ jobs:
 
     - name: Initialization environment
       run: |
-        # 物理修复：分步清理防止IO阻塞，将耗时最长的CodeQL删除移至后台
         sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc
         sudo rm -rf /opt/hostedtoolcache/CodeQL & 
-        
         sudo -E apt-get -qq update
         sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
         sudo timedatectl set-timezone "$TZ"
@@ -61,9 +59,16 @@ jobs:
       id: organize
       run: |
         mkdir -p $GITHUB_WORKSPACE/firmware_out
+        # 物理对位：深度搜集 bin/targets/ 目录下所有救砖相关的物理文件
         cd openwrt/bin/targets/
-        # 物理对位捕获：确保生成 U-Boot 固件产物
-        find . -type f \( -name "*sl_3000*" -o -name "*u-boot.fip*" -o -name "*preloader*" -o -name "*gpt.bin*" \) -exec cp -f {} $GITHUB_WORKSPACE/firmware_out/ \;
+        # 物理修复：采用更宽泛的匹配模式，确保 preloader, fip, gpt, sysupgrade 全部入包
+        find . -type f \( \
+          -name "*sl_3000*" -o \
+          -name "*u-boot.fip*" -o \
+          -name "*preloader*" -o \
+          -name "*gpt.bin*" -o \
+          -name "*bl2.img*" \
+        \) -exec cp -f {} $GITHUB_WORKSPACE/firmware_out/ \;
         echo "FIRMWARE=$GITHUB_WORKSPACE/firmware_out" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
 
@@ -71,5 +76,5 @@ jobs:
       uses: actions/upload-artifact@main
       if: steps.organize.outputs.status == 'success'
       with:
-        name: OpenWrt_6.6_SL3000_Uboot
+        name: SL3000_6.6_RECOVERY_FILES
         path: ${{ env.FIRMWARE }}
