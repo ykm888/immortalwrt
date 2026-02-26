@@ -53,12 +53,13 @@ jobs:
         cd openwrt
         make defconfig
         
-        # 物理加固步骤：强制执行下载与预备工具链
+        # 物理预编译环境
         make download -j8
         make tools/install -j$(nproc) || make tools/install V=s
         make toolchain/install -j$(nproc) || make toolchain/install V=s
         
-        # 物理顺序：在工具链准备好且 defconfig 已注入后，再执行编译
+        # 物理执行：由于 scripts/sl3000-patch.sh 已强制创建了 files/configs 目录
+        # 这里编译 uboot-mediatek 时会自动包含注入的 defconfig
         make package/boot/uboot-mediatek/compile V=s -j1
         
         # 全量编译
