@@ -52,22 +52,26 @@ jobs:
     - name: Compile the firmware
       run: |
         cd openwrt
+        # 第一遍 defconfig
         make defconfig
+        # 物理二次锁定：防止 defconfig 自动关闭 TF-A 编译开关
+        echo "CONFIG_PACKAGE_trusted-firmware-a-mt7981-emmc-comb=y" >> .config
+        echo "CONFIG_PACKAGE_trusted-firmware-a-mt7981-sdmmc-comb=y" >> .config
+        echo "CONFIG_PACKAGE_uboot-mtk-sl_3000-emmc=y" >> .config
+        # 开始物理执行
         make -j$(nproc) || make -j1 V=s
 
     - name: Organize files
       id: organize
       run: |
         mkdir -p $GITHUB_WORKSPACE/firmware_out
-        # 物理对位：深度搜集 bin/targets/ 目录下所有救砖相关的物理文件
         cd openwrt/bin/targets/
-        # 物理修复：采用更宽泛的匹配模式，确保 preloader, fip, gpt, sysupgrade 全部入包
+        # 物理搜集救砖三件套：Preloader, FIP (U-Boot), GPT
         find . -type f \( \
           -name "*sl_3000*" -o \
           -name "*u-boot.fip*" -o \
           -name "*preloader*" -o \
-          -name "*gpt.bin*" -o \
-          -name "*bl2.img*" \
+          -name "*gpt.bin*" \
         \) -exec cp -f {} $GITHUB_WORKSPACE/firmware_out/ \;
         echo "FIRMWARE=$GITHUB_WORKSPACE/firmware_out" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
