@@ -1,10 +1,10 @@
 #!/bin/bash
 # File: scripts/sl3000-patch.sh
-# 物理修复：强制创建缺失的 files 路径并注入 U-Boot 配置文件
+# 物理修复：强制创建定义并执行“外科手术式”配置注入
 
 MAKEFILE="package/boot/uboot-mediatek/Makefile"
 
-# 1. 物理注入 U-Boot 设备定义块
+# 1. 物理注入 Makefile 设备定义块
 if [ -f "$MAKEFILE" ] && ! grep -q "mt7981_sl_3000-emmc" "$MAKEFILE"; then
     cat >> "$MAKEFILE" <<EOF
 
@@ -23,11 +23,9 @@ EOF
     sed -i '/UBOOT_TARGETS :=/a \	mt7981_sl_3000-emmc \\' "$MAKEFILE"
 fi
 
-# 2. 物理修复：强制递归创建缺失的 files/configs 路径 (彻底解决目录不存在问题)
+# 2. 预备 files 补丁（第一重物理保障）
 UBOOT_FILES_DIR="package/boot/uboot-mediatek/files/configs"
 mkdir -p "$UBOOT_FILES_DIR"
-
-# 3. 物理注入缺失的 mt7981_sl_3000-emmc_defconfig
 cat > "$UBOOT_FILES_DIR/mt7981_sl_3000-emmc_defconfig" <<EOF
 CONFIG_ARM=y
 CONFIG_SYS_ARCH_TIMER=y
@@ -42,7 +40,7 @@ CONFIG_DEBUG_UART=y
 CONFIG_DEFAULT_DEVICE_TREE="mt7981-mediatek-7981r128"
 EOF
 
-# 4. 原文照抄原则：物理同步 DTS/MK/IP
+# 3. 原文照抄：DTS、MK 及 IP 物理同步
 DTS_DEST="target/linux/mediatek/dts"
 MK_DEST="target/linux/mediatek/image/filogic.mk"
 mkdir -p "$DTS_DEST"
@@ -50,7 +48,7 @@ mkdir -p "$DTS_DEST"
 [ -f "../custom-config/filogic.mk" ] && cp -f ../custom-config/filogic.mk "$MK_DEST"
 sed -i 's/192.168.1.1/192.168.6.1/g' package/base-files/files/bin/config_generate
 
-# 5. 物理配置锁定 (.config 强制注入)
+# 4. 物理配置锁定 (.config 强制注入)
 if [ -f .config ]; then
     sed -i '/CONFIG_LINUX_5_4/d' .config
     sed -i '1i CONFIG_TARGET_mediatek=y\nCONFIG_TARGET_mediatek_filogic=y\nCONFIG_TARGET_mediatek_filogic_DEVICE_sl_3000-emmc=y' .config
@@ -60,4 +58,4 @@ CONFIG_PACKAGE_uboot-mediatek-mt7981_sl_3000-emmc=y
 EOF
 fi
 
-echo "物理修复完成：已强制创建 files 目录并注入补丁。"
+echo "物理修复完成：脚本已就绪，配置注入将在 Workflow 中二次强行执行。"
