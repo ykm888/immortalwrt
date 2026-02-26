@@ -24,7 +24,6 @@ jobs:
     - name: Initialization environment
       run: |
         sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc
-        sudo rm -rf /opt/hostedtoolcache/CodeQL & 
         sudo -E apt-get -qq update
         sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
         sudo timedatectl set-timezone "$TZ"
@@ -52,13 +51,12 @@ jobs:
     - name: Compile the firmware
       run: |
         cd openwrt
-        # 第一遍 defconfig
         make defconfig
-        # 物理二次锁定：防止 defconfig 自动关闭 TF-A 编译开关
-        echo "CONFIG_PACKAGE_trusted-firmware-a-mt7981-emmc-comb=y" >> .config
-        echo "CONFIG_PACKAGE_trusted-firmware-a-mt7981-sdmmc-comb=y" >> .config
-        echo "CONFIG_PACKAGE_uboot-mtk-sl_3000-emmc=y" >> .config
-        # 开始物理执行
+        # [彻底解决开关] 物理强制独立编译 ATF，确保生成 mt7981-emmc-comb-bl2.img
+        # 这一步如果不成功，流程会直接报错熔断，不再浪费时间
+        make package/boot/trusted-firmware-a-mt7981/compile V=s -j1
+        
+        # ATF 编译完成后，再执行主流程
         make -j$(nproc) || make -j1 V=s
 
     - name: Organize files
@@ -66,13 +64,8 @@ jobs:
       run: |
         mkdir -p $GITHUB_WORKSPACE/firmware_out
         cd openwrt/bin/targets/
-        # 物理搜集救砖三件套：Preloader, FIP (U-Boot), GPT
-        find . -type f \( \
-          -name "*sl_3000*" -o \
-          -name "*u-boot.fip*" -o \
-          -name "*preloader*" -o \
-          -name "*gpt.bin*" \
-        \) -exec cp -f {} $GITHUB_WORKSPACE/firmware_out/ \;
+        # 搜集所有救砖物理文件
+        find . -type f \( -name "*sl_3000*" -o -name "*u-boot.fip*" -o -name "*preloader*" -o -name "*gpt.bin*" \) -exec cp -f {} $GITHUB_WORKSPACE/firmware_out/ \;
         echo "FIRMWARE=$GITHUB_WORKSPACE/firmware_out" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
 
