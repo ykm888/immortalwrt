@@ -53,12 +53,12 @@ jobs:
         cd openwrt
         make defconfig
         
-        # [彻底解决关键点] 物理加固：强制下载并预装工具链，防止 libc.so 缺失
+        # 物理加固步骤：强制执行下载与预备工具链
         make download -j8
         make tools/install -j$(nproc) || make tools/install V=s
         make toolchain/install -j$(nproc) || make toolchain/install V=s
         
-        # 物理顺序：工具链就绪后，再编译 U-Boot
+        # 物理顺序：在工具链准备好且 defconfig 已注入后，再执行编译
         make package/boot/uboot-mediatek/compile V=s -j1
         
         # 全量编译
