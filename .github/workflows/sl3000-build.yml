@@ -52,10 +52,16 @@ jobs:
       run: |
         cd openwrt
         make defconfig
-        # [彻底解决关键] 物理锁定：强制执行刚刚在脚本中注入的编译目标
+        
+        # [彻底解决关键点] 物理加固：强制下载并预装工具链，防止 libc.so 缺失
+        make download -j8
+        make tools/install -j$(nproc) || make tools/install V=s
+        make toolchain/install -j$(nproc) || make toolchain/install V=s
+        
+        # 物理顺序：工具链就绪后，再编译 U-Boot
         make package/boot/uboot-mediatek/compile V=s -j1
         
-        # 执行主流程全量编译
+        # 全量编译
         make -j$(nproc) || make -j1 V=s
 
     - name: Organize files
@@ -63,7 +69,6 @@ jobs:
       run: |
         mkdir -p $GITHUB_WORKSPACE/firmware_out
         cd openwrt/bin/targets/
-        # 物理搜集救砖关键产物：preloader, fip, gpt
         find . -type f \( -name "*sl_3000*" -o -name "*u-boot.fip*" -o -name "*preloader*" -o -name "*gpt.bin*" \) -exec cp -f {} $GITHUB_WORKSPACE/firmware_out/ \;
         echo "FIRMWARE=$GITHUB_WORKSPACE/firmware_out" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
