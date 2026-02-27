@@ -53,25 +53,24 @@ jobs:
         cd openwrt
         make defconfig
         
-        # 物理步骤1：下载和预备工具链
+        # 物理步骤1：预备环境
         make download -j8
         make tools/install -j$(nproc) || make tools/install V=s
         make toolchain/install -j$(nproc) || make toolchain/install V=s
         
-        # [彻底解决核心逻辑]
-        # 1. 物理强行解压 U-Boot 源码到 build_dir
+        # 物理步骤2：解压源码 (母体体系核心逻辑)
         make package/boot/uboot-mediatek/prepare V=s
         
-        # 2. 物理“外科手术”：直接向解压后的源码目录强行写入 defconfig
-        # 这能 100% 解决 cc1: fatal error，因为它直接绕过了所有拷贝机制
-        find build_dir/target-aarch64_cortex-a53_musl/u-boot-mt7981_sl_3000-emmc/ -maxdepth 2 -name "u-boot-*" -type d | while read dir; do
-            cp -v package/boot/uboot-mediatek/files/configs/mt7981_sl_3000-emmc_defconfig "$dir/configs/"
-        done
+        # [彻底解决关键点] 物理强行注入：修正之前的路径粘连错误
+        # 物理对准解压后的 configs 目录，执行强制覆盖
+        TARGET_DIR="build_dir/target-aarch64_cortex-a53_musl/u-boot-mt7981_sl_3000-emmc/u-boot-2024.10/configs"
+        mkdir -p "$TARGET_DIR"
+        cp -f package/boot/uboot-mediatek/files/configs/mt7981_sl_3000-emmc_defconfig "$TARGET_DIR/"
 
-        # 3. 物理执行编译
+        # 物理步骤3：正式编译
         make package/boot/uboot-mediatek/compile V=s -j1
         
-        # 执行全量编译
+        # 全量编译
         make -j$(nproc) || make -j1 V=s
 
     - name: Organize files
