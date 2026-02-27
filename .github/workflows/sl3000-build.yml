@@ -72,14 +72,15 @@ jobs:
         [ -e $CONFIG_FILE ] && cp -f $CONFIG_FILE openwrt/.config
         chmod +x $DIY_P2_SH
         cd openwrt
-        # 物理调用修复脚本 (内含彻底清理逻辑)
+        # 彻底解决 1：在执行脚本前物理粉碎缓存目录
+        rm -rf tmp
         $GITHUB_WORKSPACE/$DIY_P2_SH
 
     - name: 下载软件包
       id: package
       run: |
         cd openwrt
-        # 彻底解决：在 make 前物理粉碎旧索引，强制系统重新扫描
+        # 彻底解决 2：在下载和最终配置前再次粉碎，确保索引绝对最新
         rm -rf tmp
         rm -f .config.old
         make defconfig
@@ -108,7 +109,7 @@ jobs:
       run: |
         cd openwrt/bin/targets/*/*
         rm -rf packages
-        # 彻底解决：物理打捞所有救砖文件
+        # 物理打捞：强制搜寻 u-boot.fip 和 bl2.bin
         find ../../../bin/ -name "*u-boot.fip" -exec cp -f {} . \; 2>/dev/null || true
         find ../../../bin/ -name "*bl2*.bin" -exec cp -f {} . \; 2>/dev/null || true
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
@@ -134,8 +135,8 @@ jobs:
       run: |
         echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
         touch release.txt
-        echo "彻底解决：物理粉碎ASR3000污染与Leading Whitespace警告" >> release.txt
-        echo "彻底解决：强制锁定SL-3000并产出U-Boot救砖固件" >> release.txt
+        echo "终极修复：已通过 rm -rf tmp 彻底粉碎死锁缓存" >> release.txt
+        echo "终极修复：物理屏蔽 ASR3000 并产出救砖 U-Boot" >> release.txt
         echo "status=success" >> $GITHUB_OUTPUT
 
     - name: 发布至 Release
