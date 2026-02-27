@@ -1,6 +1,6 @@
 # https://github.com/P3TERX/Actions-OpenWrt
 # File: .github/workflows/openwrt-builder.yml
-# 物理修复原则：修正 mv 逻辑报错，延续 14 步截图结构，死锁 6.6 内核补丁
+# 物理修复点：克隆源修改为用户指定的个人仓库，保持 6.6 内核环境
 
 name: 司洛SL-3000 EMMC
 
@@ -9,7 +9,8 @@ on:
   workflow_dispatch:
 
 env:
-  REPO_URL: https://github.com/padavanonly/immortalwrt-mt798x-6.6
+  # 物理修复：对位到您的个人仓库源 (已剔除 tree/ 路径以符合 git clone 规范)
+  REPO_URL: https://github.com/ykm99999/66
   REPO_BRANCH: openwrt-24.10-6.6
   FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: custom-config/sl3000.config
@@ -54,8 +55,7 @@ jobs:
 
     - name: 加载自定义信息源
       run: |
-        # 物理修复：增加对 openwrt 目录的物理存在检查，防止 mv 报错熔断
-        [ -d openwrt ] && [ -e "$FEEDS_CONF" ] && mv "$FEEDS_CONF" openwrt/feeds.conf.default || echo "跳过自定义信息源加载"
+        [ -d openwrt ] && [ -e "$FEEDS_CONF" ] && mv "$FEEDS_CONF" openwrt/feeds.conf.default || echo "跳过"
 
     - name: 更新信息流
       run: cd openwrt && ./scripts/feeds update -a
@@ -66,7 +66,6 @@ jobs:
     - name: 加载自定义配置
       run: |
         [ -e files ] && mv files openwrt/files
-        # 物理修复：路径变量引用加引号，增强物理兼容性
         [ -e "$CONFIG_FILE" ] && cp -f "$CONFIG_FILE" openwrt/.config
         chmod +x $DIY_P2_SH
         cd openwrt
@@ -85,7 +84,7 @@ jobs:
       id: compile
       run: |
         cd openwrt
-        # 物理延续补丁：物理解决 U-Boot configs 目录解压后缺失问题
+        # 物理延续修复：强制解决 U-Boot 源码路径中的配置文件丢失
         make package/boot/uboot-mediatek/prepare V=s
         mkdir -p build_dir/target-aarch64_cortex-a53_musl/u-boot-mt7981_sl_3000-emmc/u-boot-2024.10/configs/
         cp -v package/boot/uboot-mediatek/files/configs/mt7981_sl_3000-emmc_defconfig build_dir/target-aarch64_cortex-a53_musl/u-boot-mt7981_sl_3000-emmc/u-boot-2024.10/configs/
