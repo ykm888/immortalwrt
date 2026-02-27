@@ -129,7 +129,7 @@ jobs:
       run: |
         echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
         touch release.txt
-        echo "物理源已更新：${{ env.REPO_URL }} 分支：${{ env.REPO_BRANCH }}" >> release.txt
+        echo "物理修复：替换失效的清理插件" >> release.txt
         echo "status=success" >> $GITHUB_OUTPUT
 
     - name: 发布至 Release
@@ -143,7 +143,7 @@ jobs:
         files: ${{ env.FIRMWARE }}/*
 
     - name: 删除旧工作流
-      uses: Mattraider/delete-workflow-runs@main
+      uses: P3TERX/delete-workflow-runs@main
       with:
         retain_days: 1
         keep_minimum_runs: 3
