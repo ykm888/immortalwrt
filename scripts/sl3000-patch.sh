@@ -1,29 +1,29 @@
 #!/bin/bash
 # File: scripts/sl3000-patch.sh
 
-echo "开始执行终极物理修复整合脚本..."
+echo "正在执行整合版物理修复逻辑..."
 
-# 1. 物理重置环境：彻底粉碎残留索引 (解决 whitespace 警告的核心)
-# 在同步任何文件前，先让系统“失忆”
+# 1. 物理重置环境：粉碎残留索引 (彻底根除 whitespace 警告)
 rm -rf tmp
 rm -f .config .config.old
 
-# 2. 三件套路径物理同步 (原文照抄路径)
+# 2. 三件套路径物理同步
 DTS_DEST="target/linux/mediatek/dts"
 MK_DEST="target/linux/mediatek/image/filogic.mk"
 mkdir -p "$DTS_DEST"
 
+# 物理同步自定义配置文件 (路径回退一级到根目录)
 [ -f "../custom-config/mt7981b-3000-emmc.dts" ] && cp -f "../custom-config/mt7981b-3000-emmc.dts" "$DTS_DEST/mt7981b-3000-emmc.dts"
 [ -f "../custom-config/filogic.mk" ] && cp -f "../custom-config/filogic.mk" "$MK_DEST"
 [ -f "../custom-config/sl3000.config" ] && cp -f "../custom-config/sl3000.config" ".config"
 
-# 3. 物理切断：抹除 ASR3000 硬件定义块，防止污染
+# 3. 物理屏蔽：抹除 ASR3000 硬件段
 sed -i '/Device\/abt_asr3000/,/endef/d' target/linux/mediatek/image/filogic.mk
 
-# 4. 物理修正默认 IP (192.168.6.1)
+# 4. 物理修正 IP (192.168.6.1)
 sed -i 's/192.168.1.1/192.168.6.1/g' package/base-files/files/bin/config_generate
 
-# 5. 强制物理重扫：确保所有驱动 (含 U-Boot) 被重新识别
+# 5. 强制物理补全：重新生成纯净的配置
 make defconfig
 
-echo "整合脚本执行完毕，缓存已粉碎，SL-3000 配置已锁定。"
+echo "整合脚本执行完毕。"
