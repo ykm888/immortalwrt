@@ -19,7 +19,6 @@ env:
   REPO_BRANCH: openwrt-24.10-6.6
   FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: custom-config/sl3000.config
-  DIY_P1_SH: diy-part1.sh
   DIY_P2_SH: scripts/sl3000-patch.sh
   UPLOAD_BIN_DIR: false
   UPLOAD_FIRMWARE: true
@@ -57,9 +56,6 @@ jobs:
     - name: 加载 feeds
       run: |
         [ -e $FEEDS_CONF ] && cp -f $FEEDS_CONF openwrt/feeds.conf.default
-        chmod +x $DIY_P1_SH
-        cd openwrt
-        $GITHUB_WORKSPACE/$DIY_P1_SH
 
     - name: 更新 feeds
       run: cd openwrt && ./scripts/feeds update -a
@@ -67,18 +63,17 @@ jobs:
     - name: 安装 feeds
       run: cd openwrt && ./scripts/feeds install -a
 
-    - name: 加载自定义配置 (终极整合版)
+    - name: 加载自定义配置 (终极整合修复版)
       run: |
         chmod +x $DIY_P2_SH
         cd openwrt
-        # 物理调用整合脚本：粉碎缓存 -> 同步三件套 -> 锁定SL3000
+        # 物理调用整合脚本，完成：粉碎残留缓存 -> 同步三件套 -> 锁定SL3000
         $GITHUB_WORKSPACE/$DIY_P2_SH
 
     - name: 下载软件包
       id: package
       run: |
         cd openwrt
-        # 物理二次确认
         make download -j8
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
@@ -104,7 +99,7 @@ jobs:
       run: |
         cd openwrt/bin/targets/*/*
         rm -rf packages
-        # 物理打捞：强制搜寻并拷贝 u-boot.fip 和 bl2.bin
+        # 物理打捞指令：强制寻找并拷贝 u-boot.fip 和 bl2 文件
         find ../../../bin/ -name "*u-boot.fip" -exec cp -f {} . \; 2>/dev/null || true
         find ../../../bin/ -name "*bl2*.bin" -exec cp -f {} . \; 2>/dev/null || true
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
@@ -130,8 +125,9 @@ jobs:
       run: |
         echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
         touch release.txt
-        echo "终极修复版：已物理粉碎缓存并整合所有补丁" >> release.txt
-        echo "物理产出：SL-3000 单机固件 + U-Boot 救砖包" >> release.txt
+        echo "物理修复：已彻底粉碎 ASR3000 污染与 whitespace 警告" >> release.txt
+        echo "物理修复：强制产出 U-Boot 救砖固件" >> release.txt
+        echo "状态：整合版脚本已接管所有 DIY 逻辑" >> release.txt
         echo "status=success" >> $GITHUB_OUTPUT
 
     - name: 发布至 Release
