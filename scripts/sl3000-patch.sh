@@ -1,34 +1,159 @@
-#!/bin/bash
-# File: scripts/sl3000-patch.sh
-# 核心指令：单脚本物理注入，只改错误，严禁画蛇添足
+#
+# Copyright (c) 2019-2020 P3TERX <https://p3terx.com>
+#
+# This is free software, licensed under the MIT License.
+# See /LICENSE for more information.
+#
+# https://github.com/P3TERX/Actions-OpenWrt
+# Description: Build OpenWrt using GitHub Actions
+#
 
-MAKEFILE="package/boot/uboot-mediatek/Makefile"
+name: OpenWrt-Builder
 
-# 1. 物理注入 U-Boot 设备定义块 (printf 绕过 EOF)
-if [ -f "$MAKEFILE" ] && ! grep -q "mt7981_sl_3000-emmc" "$MAKEFILE"; then
-    printf '\ndefine U-Boot/mt7981_sl_3000-emmc\n  NAME:=SL 3000 (eMMC)\n  BUILD_SUBTARGET:=filogic\n  BUILD_DEVICES:=sl_3000-emmc\n  UBOOT_CONFIG:=mt7981_sl_3000-emmc\n  UBOOT_IMAGE:=u-boot.fip\n  BL2_BOOTDEV:=emmc\n  BL2_SOC:=mt7981\n  BL2_DDRTYPE:=ddr3\n  DEPENDS:=+trusted-firmware-a-mt7981-emmc-ddr3\nendef\n' >> "$MAKEFILE"
-    sed -i '/UBOOT_TARGETS :=/a \	mt7981_sl_3000-emmc \\' "$MAKEFILE"
-fi
+on:
+  repository_dispatch:
+  workflow_dispatch:
 
-# 2. 物理建立 U-Boot 缺失配置路径并注入文件 (printf 强灌)
-UBOOT_FILES_DIR="package/boot/uboot-mediatek/files/configs"
-mkdir -p "$UBOOT_FILES_DIR"
-printf 'CONFIG_ARM=y\nCONFIG_SYS_ARCH_TIMER=y\nCONFIG_ARCH_MEDIATEK=y\nCONFIG_SYS_MALLOC_F_LEN=0x4000\nCONFIG_SYS_HAS_NONCACHED_MEMORY=y\nCONFIG_TARGET_MT7981=y\nCONFIG_DEBUG_UART_BASE=0x11002000\nCONFIG_DEBUG_UART_CLOCK=40000000\nCONFIG_SYS_LOAD_ADDR=0x44000000\nCONFIG_DEBUG_UART=y\nCONFIG_DEFAULT_DEVICE_TREE="mt7981-mediatek-7981r128"\n' > "$UBOOT_FILES_DIR/mt7981_sl_3000-emmc_defconfig"
+env:
+  REPO_URL: https://github.com/coolsnowwolf/lede
+  REPO_BRANCH: master
+  FEEDS_CONF: feeds.conf.default
+  CONFIG_FILE: custom-config/sl3000.config
+  DIY_P1_SH: diy-part1.sh
+  DIY_P2_SH: scripts/sl3000-patch.sh
+  UPLOAD_BIN_DIR: false
+  UPLOAD_FIRMWARE: true
+  UPLOAD_RELEASE: true
+  TZ: Asia/Shanghai
 
-# 3. 三件套路径物理同步 (同步 custom-config 路径)
-DTS_DEST="target/linux/mediatek/dts"
-MK_DEST="target/linux/mediatek/image/filogic.mk"
-mkdir -p "$DTS_DEST"
-# 注意：脚本在 openwrt 目录下执行，custom-config 在其上一级
-[ -f "../custom-config/mt7981b-3000-emmc.dts" ] && cp -f ../custom-config/mt7981b-3000-emmc.dts "$DTS_DEST/mt7981b-3000-emmc.dts"
-[ -f "../custom-config/filogic.mk" ] && cp -f ../custom-config/filogic.mk "$MK_DEST"
+jobs:
+  build:
+    runs-on: ubuntu-22.04
 
-# 4. 修改默认 IP
-sed -i 's/192.168.1.1/192.168.6.1/g' package/base-files/files/bin/config_generate
+    steps:
+    - name: 检查项目
+      uses: actions/checkout@main
 
-# 5. 物理配置锁定 (.config)
-if [ -f .config ]; then
-    sed -i '/CONFIG_LINUX_5_4/d' .config
-    sed -i '1i CONFIG_TARGET_mediatek=y\nCONFIG_TARGET_mediatek_filogic=y\nCONFIG_TARGET_mediatek_filogic_DEVICE_sl_3000-emmc=y' .config
-    printf 'CONFIG_PACKAGE_trusted-firmware-a-mt7981-emmc-ddr3=y\nCONFIG_PACKAGE_uboot-mediatek-mt7981_sl_3000-emmc=y\n' >> .config
-fi
+    - name: 初始化环境
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc
+        sudo -E apt-get -qq update
+        sudo -E apt-get -qq install $(curl -fsSL https://is.gd/p3terx_build_env)
+        sudo -E apt-get -qq autoremove --purge
+        sudo -E apt-get -qq clean
+        sudo timedatectl set-timezone "$TZ"
+        sudo mkdir -p /workdir
+        sudo chown $USER:$USER /workdir
+
+    - name: 下载源码
+      working-directory: /workdir
+      run: |
+        df -hT $PWD
+        git clone $REPO_URL -b $REPO_BRANCH openwrt
+        ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
+
+    - name: 加载 feeds
+      run: |
+        [ -e $FEEDS_CONF ] && cp -f $FEEDS_CONF openwrt/feeds.conf.default
+        chmod +x $DIY_P1_SH
+        cd openwrt
+        $GITHUB_WORKSPACE/$DIY_P1_SH
+
+    - name: 更新 feeds
+      run: cd openwrt && ./scripts/feeds update -a
+
+    - name: 安装 feeds
+      run: cd openwrt && ./scripts/feeds install -a
+
+    - name: 加载自定义配置
+      run: |
+        [ -e $CONFIG_FILE ] && cp -f $CONFIG_FILE openwrt/.config
+        chmod +x $DIY_P2_SH
+        cd openwrt
+        $GITHUB_WORKSPACE/$DIY_P2_SH
+
+    - name: 下载软件包
+      id: package
+      run: |
+        cd openwrt
+        make defconfig
+        make download -j8
+        find dl -size -1024c -exec ls -l {} \;
+        find dl -size -1024c -exec rm -f {} \;
+
+    - name: 编译固件
+      id: compile
+      run: |
+        cd openwrt
+        echo -e "$(nproc) thread compile"
+        make -j$(nproc) || make -j1 || make -j1 V=s
+        echo "status=success" >> $GITHUB_OUTPUT
+        grep "CONFIG_TARGET" .config | head -n 1 > DEVICE_NAME
+        [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME | cut -d '"' -f 2)" >> $GITHUB_ENV
+        echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+
+    - name: 检查剩余空间
+      if: (!cancelled())
+      run: df -hT
+
+    - name: 整理文件
+      id: organize
+      if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
+      run: |
+        cd openwrt/bin/targets/*/*
+        rm -rf packages
+        # 物理打捞：强制从 bin 目录搜索并打捞 u-boot.fip 和 bl2.bin
+        find ../../../bin/ -name "*u-boot.fip" -exec cp -f {} . \; 2>/dev/null || true
+        find ../../../bin/ -name "*bl2*.bin" -exec cp -f {} . \; 2>/dev/null || true
+        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+        echo "status=success" >> $GITHUB_OUTPUT
+
+    - name: 上传 bin 目录
+      uses: actions/upload-artifact@main
+      if: steps.organize.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
+      with:
+        name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        path: openwrt/bin
+
+    - name: 上传固件目录
+      uses: actions/upload-artifact@main
+      if: steps.organize.outputs.status == 'success' && !cancelled()
+      with:
+        name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        path: ${{ env.FIRMWARE }}
+
+    - name: 生成发布标签
+      id: tag
+      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+      run: |
+        echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
+        touch release.txt
+        echo "SL-3000 U-Boot 救砖固件已物理集成" >> release.txt
+        echo "status=success" >> $GITHUB_OUTPUT
+
+    - name: 发布至 Release
+      uses: softprops/action-gh-release@v1
+      if: steps.tag.outputs.status == 'success' && !cancelled()
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ steps.tag.outputs.release_tag }}
+        body_path: release.txt
+        files: ${{ env.FIRMWARE }}/*
+
+    - name: 删除旧工作流
+      uses: Mattraider/delete-workflow-runs@main
+      with:
+        retain_days: 1
+        keep_minimum_runs: 3
+
+    - name: 删除旧 Release
+      uses: dev-drprasad/delete-older-releases@v0.1.0
+      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+      with:
+        keep_latest: 3
+        delete_tags: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
