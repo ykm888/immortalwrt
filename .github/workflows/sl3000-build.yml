@@ -72,14 +72,13 @@ jobs:
         [ -e $CONFIG_FILE ] && cp -f $CONFIG_FILE openwrt/.config
         chmod +x $DIY_P2_SH
         cd openwrt
-        # 物理修正：在此处执行 P2 脚本（包含 rm -rf tmp 逻辑）
         $GITHUB_WORKSPACE/$DIY_P2_SH
 
     - name: 下载软件包
       id: package
       run: |
         cd openwrt
-        # 物理熔断：删除旧索引残留，确保 make defconfig 100% 重新补全
+        # 物理修正：在此处再次强制清理 tmp，确保 make defconfig 彻底重置
         rm -rf tmp
         rm -f .config.old
         make defconfig
@@ -108,7 +107,7 @@ jobs:
       run: |
         cd openwrt/bin/targets/*/*
         rm -rf packages
-        # 物理打捞：强制抓取救砖固件
+        # 物理打捞：延续逻辑，强制抓取救砖固件
         find ../../../bin/ -name "*u-boot.fip" -exec cp -f {} . \; 2>/dev/null || true
         find ../../../bin/ -name "*bl2*.bin" -exec cp -f {} . \; 2>/dev/null || true
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
@@ -135,7 +134,6 @@ jobs:
         echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
         touch release.txt
         echo "物理修复：彻底解决ASR3000污染与U-Boot缺失问题" >> release.txt
-        echo "物理修复：修正配置前导空格警告" >> release.txt
         echo "status=success" >> $GITHUB_OUTPUT
 
     - name: 发布至 Release
