@@ -1,4 +1,8 @@
-name: 司洛SL-3000 EMMC (Kernel 6.6) 救砖固件构建
+# https://github.com/P3TERX/Actions-OpenWrt
+# File: .github/workflows/openwrt-builder.yml
+# 物理延续：100% 还原截图步骤，单脚本物理修复 6.6 内核
+
+name: 司洛SL-3000 EMMC
 
 on:
   repository_dispatch:
@@ -9,8 +13,10 @@ env:
   REPO_BRANCH: openwrt-24.10-6.6
   FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: custom-config/sl3000.config
-  DIY_P1_SH: diy-part1.sh
   DIY_P2_SH: scripts/sl3000-patch.sh
+  UPLOAD_BIN_DIR: false
+  UPLOAD_FIRMWARE: true
+  UPLOAD_RELEASE: true
   TZ: Asia/Shanghai
 
 jobs:
@@ -18,73 +24,114 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-    - name: Checkout
+    - name: 设置工作
       uses: actions/checkout@main
 
-    - name: Initialization environment
+    - name: 查看
       run: |
-        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc
+        df -h
+        free -m
+
+    - name: 初始化环境
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+        sudo docker image prune --all --force
         sudo -E apt-get -qq update
         sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
+        sudo -E apt-get -qq autoremove --purge
+        sudo -E apt-get -qq clean
         sudo timedatectl set-timezone "$TZ"
+        sudo mkdir -p /workdir
+        sudo chown $USER:$GROUPS /workdir
 
-    - name: Clone source code
+    - name: 克隆源代码
+      working-directory: /workdir
       run: |
-        git clone --depth 1 $REPO_URL -b $REPO_BRANCH openwrt
+        git clone $REPO_URL -b $REPO_BRANCH openwrt
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
-    - name: Load custom feeds
+    - name: 加载自定义信息源
       run: |
-        [ -e $FEEDS_CONF ] && cp -f $FEEDS_CONF openwrt/feeds.conf.default
-        chmod +x $DIY_P1_SH
-        cd openwrt && $GITHUB_WORKSPACE/$DIY_P1_SH
+        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
+        # 物理整合：该步骤保留以对齐截图结构，逻辑已移至单一脚本
 
-    - name: Update/Install feeds
-      run: cd openwrt && ./scripts/feeds update -a && ./scripts/feeds install -a
+    - name: 更新信息流
+      run: cd openwrt && ./scripts/feeds update -a
 
-    - name: Load custom configuration
+    - name: 安装订阅源
+      run: cd openwrt && ./scripts/feeds install -a
+
+    - name: 加载自定义配置
       run: |
-        [ -e $CONFIG_FILE ] && cp -f $CONFIG_FILE openwrt/.config
+        [ -e files ] && mv files openwrt/files
+        [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
         chmod +x $DIY_P2_SH
-        cd openwrt && $GITHUB_WORKSPACE/$DIY_P2_SH
+        cd openwrt
+        $GITHUB_WORKSPACE/$DIY_P2_SH
 
-    - name: Compile the firmware
+    - name: 下载软件包
+      id: package
       run: |
         cd openwrt
         make defconfig
-        
-        # 物理步骤1：预备环境
         make download -j8
-        make tools/install -j$(nproc) || make tools/install V=s
-        make toolchain/install -j$(nproc) || make toolchain/install V=s
-        
-        # 物理步骤2：解压源码 (母体体系核心逻辑)
-        make package/boot/uboot-mediatek/prepare V=s
-        
-        # [彻底解决关键点] 物理强行注入：修正之前的路径粘连错误
-        # 物理对准解压后的 configs 目录，执行强制覆盖
-        TARGET_DIR="build_dir/target-aarch64_cortex-a53_musl/u-boot-mt7981_sl_3000-emmc/u-boot-2024.10/configs"
-        mkdir -p "$TARGET_DIR"
-        cp -f package/boot/uboot-mediatek/files/configs/mt7981_sl_3000-emmc_defconfig "$TARGET_DIR/"
+        find dl -size -1024c -exec ls -l {} \;
+        find dl -size -1024c -exec rm -f {} \;
 
-        # 物理步骤3：正式编译
-        make package/boot/uboot-mediatek/compile V=s -j1
-        
-        # 全量编译
-        make -j$(nproc) || make -j1 V=s
-
-    - name: Organize files
-      id: organize
+    - name: 编译固件
+      id: compile
       run: |
-        mkdir -p $GITHUB_WORKSPACE/firmware_out
-        cd openwrt/bin/targets/
-        find . -type f \( -name "*sl_3000*" -o -name "*u-boot.fip*" -o -name "*preloader*" -o -name "*gpt.bin*" \) -exec cp -f {} $GITHUB_WORKSPACE/firmware_out/ \;
-        echo "FIRMWARE=$GITHUB_WORKSPACE/firmware_out" >> $GITHUB_ENV
+        cd openwrt
+        # 物理注入：解决 U-Boot 源码路径解压报错
+        make package/boot/uboot-mediatek/prepare V=s
+        mkdir -p build_dir/target-aarch64_cortex-a53_musl/u-boot-mt7981_sl_3000-emmc/u-boot-2024.10/configs/
+        cp -v package/boot/uboot-mediatek/files/configs/mt7981_sl_3000-emmc_defconfig build_dir/target-aarch64_cortex-a53_musl/u-boot-mt7981_sl_3000-emmc/u-boot-2024.10/configs/
+        
+        make -j$(nproc) || make -j1 || make -j1 V=s
+        echo "status=success" >> $GITHUB_OUTPUT
+        grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
+        [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
+        echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+
+    - name: 整理文件
+      id: organize
+      if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
+      run: |
+        cd openwrt/bin/targets/*/*
+        rm -rf packages
+        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
 
-    - name: Upload firmware
+    - name: 上传固件目录
       uses: actions/upload-artifact@main
-      if: steps.organize.outputs.status == 'success'
+      if: steps.organize.outputs.status == 'success' && !cancelled()
       with:
-        name: SL3000_6.6_RECOVERY_FILES
+        name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
         path: ${{ env.FIRMWARE }}
+
+    - name: 生成发布标签
+      id: tag
+      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+      run: |
+        echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
+        touch release.txt
+        echo "status=success" >> $GITHUB_OUTPUT
+
+    - name: 发布固件至Release
+      uses: softprops/action-gh-release@v2.1.0
+      if: steps.tag.outputs.status == 'success' && !cancelled()
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        files: ${{ env.FIRMWARE }}/*
+        name: ${{ env.FILE_DATE }}-SL3000-EMMC-6.6
+        tag_name: ${{ steps.tag.outputs.release_tag }}
+        body_path: release.txt
+
+    - name: 结账后
+      uses: Mattraks/delete-workflow-runs@main
+      with:
+        retain_days: 0
+        keep_minimum_runs: 2
