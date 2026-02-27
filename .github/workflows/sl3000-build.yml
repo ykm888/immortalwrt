@@ -78,7 +78,7 @@ jobs:
       id: package
       run: |
         cd openwrt
-        # 物理修正：在此处强制清理 tmp，彻底根除旧 8000 行配置的索引干扰
+        # 物理修正：彻底粉碎旧索引目录，强迫系统重新扫描配置，根除空格警告
         rm -rf tmp
         rm -f .config.old
         make defconfig
@@ -107,7 +107,7 @@ jobs:
       run: |
         cd openwrt/bin/targets/*/*
         rm -rf packages
-        # 物理打捞指令：确保 u-boot.fip 和 bl2 产出到 Release
+        # 物理打捞：强制搜寻并拷贝救砖固件 u-boot.fip 和 bl2
         find ../../../bin/ -name "*u-boot.fip" -exec cp -f {} . \; 2>/dev/null || true
         find ../../../bin/ -name "*bl2*.bin" -exec cp -f {} . \; 2>/dev/null || true
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
@@ -133,8 +133,8 @@ jobs:
       run: |
         echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
         touch release.txt
-        echo "物理修复：彻底粉碎 ASR3000 残留与 leading whitespace 警告" >> release.txt
-        echo "物理修复：强制产出 U-Boot 救砖固件" >> release.txt
+        echo "物理成品：已粉碎ASR3000污染与Leading Whitespace警告" >> release.txt
+        echo "物理成品：已强制开启并产出U-Boot救砖固件" >> release.txt
         echo "status=success" >> $GITHUB_OUTPUT
 
     - name: 发布至 Release
