@@ -8,17 +8,17 @@ mkdir -p "$DTS_DEST"
 [ -f "custom-config/mt7981b-3000-emmc.dts" ] && cp -f "custom-config/mt7981b-3000-emmc.dts" "$DTS_DEST/mt7981b-3000-emmc.dts"
 [ -f "custom-config/filogic.mk" ] && cp -f "custom-config/filogic.mk" "$MK_DEST"
 
-# 2. 物理清零：彻底粉碎残留索引 (根除 leading whitespace 警告)
+# 2. 物理清零：粉碎残留索引 (彻底根除 whitespace 警告)
 rm -rf tmp
 rm -f .config.old
 
-# 3. 物理屏蔽：彻底从源码 Makefile 抹除 ASR3000 (物理断绝其生成可能)
+# 3. 物理屏蔽：彻底从 Makefile 抹除 ASR3000 定义段 (物理断绝其生成路径)
 sed -i '/Device\/abt_asr3000/,/endef/d' target/linux/mediatek/image/filogic.mk
 
 # 4. 物理修正 IP (192.168.6.1)
 sed -i 's/192.168.1.1/192.168.6.1/g' package/base-files/files/bin/config_generate
 
-# 5. 物理补全：基于 6 行 Config 强制补齐所有底层依赖
+# 5. 物理补全：强制基于精简 Config 补齐底层依赖
 make defconfig
 
 echo "24.10 源码 + 6.6 内核 物理修复脚本执行完毕。"
