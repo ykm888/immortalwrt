@@ -67,23 +67,18 @@ jobs:
     - name: 安装 feeds
       run: cd openwrt && ./scripts/feeds install -a
 
-    - name: 加载自定义配置
+    - name: 加载自定义配置 (终极整合版)
       run: |
-        [ -e $CONFIG_FILE ] && cp -f $CONFIG_FILE openwrt/.config
         chmod +x $DIY_P2_SH
         cd openwrt
-        # 彻底解决 1：在执行脚本前物理粉碎缓存目录
-        rm -rf tmp
+        # 物理调用整合脚本：粉碎缓存 -> 同步三件套 -> 锁定SL3000
         $GITHUB_WORKSPACE/$DIY_P2_SH
 
     - name: 下载软件包
       id: package
       run: |
         cd openwrt
-        # 彻底解决 2：在下载和最终配置前再次粉碎，确保索引绝对最新
-        rm -rf tmp
-        rm -f .config.old
-        make defconfig
+        # 物理二次确认
         make download -j8
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
@@ -109,7 +104,7 @@ jobs:
       run: |
         cd openwrt/bin/targets/*/*
         rm -rf packages
-        # 物理打捞：强制搜寻 u-boot.fip 和 bl2.bin
+        # 物理打捞：强制搜寻并拷贝 u-boot.fip 和 bl2.bin
         find ../../../bin/ -name "*u-boot.fip" -exec cp -f {} . \; 2>/dev/null || true
         find ../../../bin/ -name "*bl2*.bin" -exec cp -f {} . \; 2>/dev/null || true
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
@@ -135,8 +130,8 @@ jobs:
       run: |
         echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
         touch release.txt
-        echo "终极修复：已通过 rm -rf tmp 彻底粉碎死锁缓存" >> release.txt
-        echo "终极修复：物理屏蔽 ASR3000 并产出救砖 U-Boot" >> release.txt
+        echo "终极修复版：已物理粉碎缓存并整合所有补丁" >> release.txt
+        echo "物理产出：SL-3000 单机固件 + U-Boot 救砖包" >> release.txt
         echo "status=success" >> $GITHUB_OUTPUT
 
     - name: 发布至 Release
