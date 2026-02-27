@@ -15,7 +15,6 @@ on:
   workflow_dispatch:
 
 env:
-  # 物理对位：已锁定为您指定的新仓库源与分支
   REPO_URL: https://github.com/ykm99999/66
   REPO_BRANCH: openwrt-24.10-6.6
   FEEDS_CONF: feeds.conf.default
@@ -52,7 +51,6 @@ jobs:
       working-directory: /workdir
       run: |
         df -hT $PWD
-        # 物理执行：克隆指定的新源
         git clone $REPO_URL -b $REPO_BRANCH openwrt
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
@@ -106,7 +104,6 @@ jobs:
       run: |
         cd openwrt/bin/targets/*/*
         rm -rf packages
-        # 物理打捞：强制打捞新 Makefile 产出的 u-boot.fip 和 bl2
         find ../../../bin/ -name "*u-boot.fip" -exec cp -f {} . \; 2>/dev/null || true
         find ../../../bin/ -name "*bl2*.bin" -exec cp -f {} . \; 2>/dev/null || true
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
