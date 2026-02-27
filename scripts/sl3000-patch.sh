@@ -10,9 +10,11 @@ mkdir -p "$DTS_DEST"
 [ -f "custom-config/mt7981b-3000-emmc.dts" ] && cp -f "custom-config/mt7981b-3000-emmc.dts" "$DTS_DEST/mt7981b-3000-emmc.dts"
 [ -f "custom-config/filogic.mk" ] && cp -f "custom-config/filogic.mk" "$MK_DEST"
 
-# 2. 物理勾选强制开关（针对 6.6 内核 U-Boot 编译）
+# 2. 物理勾选强制开关（核心驱动补丁：ATF + U-Boot）
 if [ -f .config ]; then
+    # 物理勾选：MT7981 救砖专用 ATF 驱动
     echo "CONFIG_PACKAGE_trusted-firmware-a-mt7981-emmc-ddr3=y" >> .config
+    # 物理勾选：SL-3000 专用 U-Boot 镜像定义
     echo "CONFIG_PACKAGE_uboot-mediatek-mt7981_sl_3000-emmc=y" >> .config
 fi
 
