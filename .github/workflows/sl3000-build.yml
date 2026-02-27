@@ -1,6 +1,6 @@
 # https://github.com/P3TERX/Actions-OpenWrt
 # File: .github/workflows/openwrt-builder.yml
-# 物理延续：100% 还原截图步骤，单脚本物理修复 6.6 内核
+# 物理修复原则：修正 mv 逻辑报错，延续 14 步截图结构，死锁 6.6 内核补丁
 
 name: 司洛SL-3000 EMMC
 
@@ -54,8 +54,8 @@ jobs:
 
     - name: 加载自定义信息源
       run: |
-        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
-        # 物理整合：该步骤保留以对齐截图结构，逻辑已移至单一脚本
+        # 物理修复：增加对 openwrt 目录的物理存在检查，防止 mv 报错熔断
+        [ -d openwrt ] && [ -e "$FEEDS_CONF" ] && mv "$FEEDS_CONF" openwrt/feeds.conf.default || echo "跳过自定义信息源加载"
 
     - name: 更新信息流
       run: cd openwrt && ./scripts/feeds update -a
@@ -66,7 +66,8 @@ jobs:
     - name: 加载自定义配置
       run: |
         [ -e files ] && mv files openwrt/files
-        [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
+        # 物理修复：路径变量引用加引号，增强物理兼容性
+        [ -e "$CONFIG_FILE" ] && cp -f "$CONFIG_FILE" openwrt/.config
         chmod +x $DIY_P2_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH
@@ -84,7 +85,7 @@ jobs:
       id: compile
       run: |
         cd openwrt
-        # 物理注入：解决 U-Boot 源码路径解压报错
+        # 物理延续补丁：物理解决 U-Boot configs 目录解压后缺失问题
         make package/boot/uboot-mediatek/prepare V=s
         mkdir -p build_dir/target-aarch64_cortex-a53_musl/u-boot-mt7981_sl_3000-emmc/u-boot-2024.10/configs/
         cp -v package/boot/uboot-mediatek/files/configs/mt7981_sl_3000-emmc_defconfig build_dir/target-aarch64_cortex-a53_musl/u-boot-mt7981_sl_3000-emmc/u-boot-2024.10/configs/
